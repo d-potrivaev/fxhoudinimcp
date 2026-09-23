@@ -915,6 +915,18 @@ def _dry_run_in_scratch(above, container: str, name: str, nodes: list, parent_pa
     return result
 
 
+def _upstream_with(node: hou.Node, method: str, include_self: bool = False) -> hou.Node | None:
+    """*node* (when include_self) or the nearest node up its first inputs having *method*."""
+    current = node if include_self else (node.inputs() or (None,))[0]
+    seen = set()
+    while current is not None and current.path() not in seen:
+        if hasattr(current, method):
+            return current
+        seen.add(current.path())
+        current = (current.inputs() or (None,))[0]
+    return None
+
+
 def _build_in_new_container(
     parent_path: str, container: str, nodes: list, dry_run: bool, layout: bool
 ) -> dict:
@@ -1296,6 +1308,7 @@ def build_network(
     # Per node path: what the literals in `parms` did to expressions.
     parm_reports: dict[str, dict[str, dict[str, str]]] = {}
     flags_not_applied: dict[str, list[str]] = {}
+    display_moved: dict[str, str] = {}
     try:
         for spec in nodes:
             node = parent.createNode(resolved_types[spec["type"]].name(), spec.get("name"))
@@ -1362,10 +1375,17 @@ def build_network(
                     continue
                 if hasattr(node, setter):
                     getattr(node, setter)(bool(flags[flag]))
-                else:
-                    # A ROP or VOP has no display/template flag: say so
-                    # rather than skip it as if it had been set.
-                    flags_not_applied.setdefault(node.path(), []).append(flag)
+                    continue
+                # A ROP or VOP has no display/template flag: say so rather
+                # than skip it as if it had been set.
+                flags_not_applied.setdefault(node.path(), []).append(flag)
+                if flag == "display" and flags[flag]:
+                    # A usdrender_rop at the end of a stage: what the caller
+                    # wants seen is what it renders, its input.
+                    upstream = _upstream_with(node, setter)
+                    if upstream is not None:
+                        upstream.setDisplayFlag(True)
+                        display_moved[node.path()] = upstream.path()
             if spec.get("color"):
                 node.setColor(hou.Color(tuple(spec["color"])))
             if spec.get("comment"):
@@ -1381,6 +1401,19 @@ def build_network(
             "errors": [f"build failed and was rolled back: {readable_message(exc)}"],
             "created": [],
         }
+
+    # In a network that was empty, Houdini leaves the display flag on the
+    # first node created: a Solaris build displayed (and reported) its lone
+    # sphere instead of the finished stage. Unless a spec chose, the last
+    # node that can carry the flag gets it, as an artist would set it.
+    asked_for_display = any(
+        isinstance(spec, dict) and "display" in (spec.get("flags") or {}) for spec in nodes
+    )
+    if not existing and not asked_for_display and created:
+        with contextlib.suppress(Exception):
+            last = _upstream_with(list(created.values())[-1], "setDisplayFlag", include_self=True)
+            if last is not None:
+                last.setDisplayFlag(True)
 
     # Placement is a floor, not a layout option: whatever `layout` says and
     # whatever the auto-layout flag says, a node THIS call created must not be
@@ -1406,17 +1439,25 @@ def build_network(
     for report in reports:
         report.update(parm_reports.get(report["path"], {}))
     error_nodes = [r["path"] for r in reports if r.get("errors")]
+    evidence = _geometry_summary(display)
+    if evidence is None and hasattr(parent, "stage"):
+        # Shaders built inside a Material Library: the evidence is the stage
+        # the library now authors (its Material prims), not null.
+        with contextlib.suppress(Exception):
+            evidence = {"stage_of": parent.path(), **_stage_summary(parent)}
     result = {
         "success": True,
         "valid": True,
         "created": reports,
         "display_node": display.path() if display is not None else None,
-        "geometry": _geometry_summary(display),
+        "geometry": evidence,
         "error_nodes": error_nodes,
         "node_count": len(reports),
     }
     if flags_not_applied:
         result["flags_not_applied"] = flags_not_applied
+    if display_moved:
+        result["display_set_upstream"] = display_moved
     # A literal that did not take is part of the spec this call did not
     # build, so it is said at the top level, not only inside a node report:
     # a bare set() used to leave a Ray SOP's @N.x in place and answer success.
@@ -1707,8 +1748,9 @@ def get_node_card(
         "parms_truncated": truncated,
         "parms": parms,
         "multiparms": multiparms,
-        "help": help_text,
     }
+    if help_text is not None:
+        card["help"] = help_text
     if connectors is not None:
         card["inputs"] = connectors["inputs"]
         card["outputs"] = connectors["outputs"]

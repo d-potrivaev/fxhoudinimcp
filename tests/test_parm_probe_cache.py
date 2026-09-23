@@ -78,3 +78,20 @@ def test_long_frame_ranges_keep_spaced_rows_and_every_problem():
     assert len(shown) == graph._FRAME_ROWS_SHOWN + 1
     short = rows[:10]
     assert graph._thin_frame_rows(short) is short
+
+
+def test_display_goes_to_the_nearest_upstream_node_that_has_the_flag():
+    class Rop:  # a usdrender_rop: no setDisplayFlag
+        def __init__(self, source):
+            self.source = source
+
+        def inputs(self):
+            return (self.source,)
+
+        def path(self):
+            return "/obj/lop/render"
+
+    settings = MagicMock()
+    settings.path.return_value = "/obj/lop/karma_settings"
+    assert graph._upstream_with(Rop(settings), "setDisplayFlag") is settings
+    assert graph._upstream_with(settings, "setDisplayFlag", include_self=True) is settings

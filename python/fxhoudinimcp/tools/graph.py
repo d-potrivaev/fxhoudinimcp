@@ -58,6 +58,11 @@ async def build_network(
     `expressions_in_the_way`, the build reports `expressions_kept` and a
     `warning`. "override_expression": true on the spec clears them first.
 
+    Display: in a network that was empty, the last node gets the display
+    flag unless a spec sets one. A display flag asked of a node that has
+    none (a usdrender_rop) goes to its nearest input that has one, listed in
+    `display_set_upstream`.
+
     There is no "children" key: build the subnet, then call build_network
     again with the subnet as parent_path.
 

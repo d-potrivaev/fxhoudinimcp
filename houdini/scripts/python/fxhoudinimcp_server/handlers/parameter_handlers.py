@@ -380,7 +380,8 @@ def _write_parm(parm: hou.Parm, value: Any, override_expression: bool = False) -
     new_value = _serialize_value(parm.eval())
     info: dict[str, Any] = {"new_value": new_value}
     raw = _raw_string(parm)
-    if raw is not None:
+    # Only when it differs: "$HIP/geo" is worth seeing, "/geo/ball" twice is not.
+    if raw is not None and raw != new_value:
         info["raw_value"] = raw
     matches = _values_match(value, new_value)
     if after is not None and through is not None and matches:
@@ -466,7 +467,7 @@ def _set_tuple(
         kept.append(entry)
     report: dict[str, Any] = {}
     raw = [_raw_string(p) for p in components]
-    if any(r is not None for r in raw):
+    if any(r is not None and r != v for r, v in zip(raw, new_value, strict=False)):
         report["raw_value"] = raw
     if kept:
         same = all(entry.get("same_as_evaluated") for entry in kept)
