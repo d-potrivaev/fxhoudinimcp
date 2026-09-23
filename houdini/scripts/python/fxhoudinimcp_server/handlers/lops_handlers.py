@@ -489,7 +489,8 @@ def _list_usd_prims(
     # "/materials/BLD_probes" too; Sdf.Path.HasPrefix compares path
     # elements, and Usd.PrimRange(root) never leaves the subtree at all.
     proxies = bool(traverse_instance_proxies)
-    prims = _traverse(stage, None if root_path == "/" else root, proxies)
+    prims = iter(_traverse(stage, None if root_path == "/" else root, proxies))
+    prune = getattr(prims, "PruneChildren", None)  # a Usd.PrimRange iterator has it
 
     for prim in prims:
         prim_path = prim.GetPath()
@@ -498,9 +499,15 @@ def _list_usd_prims(
         if root_path != "/" and not prim_path.HasPrefix(root_sdf_path):
             continue
 
-        # Depth filter, counted in path elements below root
-        if depth is not None and prim_path.pathElementCount - root_depth > depth:
-            continue
+        # Depth filter, counted in path elements below root. The walk stops
+        # descending at the limit instead of visiting and discarding the whole
+        # stage below it.
+        if depth is not None:
+            below = prim_path.pathElementCount - root_depth
+            if below >= depth and prune is not None:
+                prune()
+            if below > depth:
+                continue
 
         # Type filter
         if prim_type is not None and str(prim.GetTypeName()) != prim_type:
@@ -959,9 +966,22 @@ def _get_usd_materials(*, node_path: str) -> dict[str, Any]:
 
     materials: list[dict[str, Any]] = []
     bindings_map: dict[str, list[str]] = {}
+    # Direct bindings are matched against the materials after the walk, since
+    # a binding can precede its material in traversal order.
+    direct: list[tuple[str, str]] = []
+    gprims = []
 
-    # Find all materials
+    # One walk collects materials, direct bindings and gprims.
     for prim in stage.Traverse():
+        with contextlib.suppress(Exception):
+            bound = UsdShade.MaterialBindingAPI(prim).GetDirectBinding()
+            bound_path = str(bound.GetMaterialPath())
+            if bound_path:
+                direct.append((bound_path, str(prim.GetPath())))
+        with contextlib.suppress(Exception):
+            if prim.IsA(UsdGeom.Gprim):
+                gprims.append(prim)
+                continue
         if prim.IsA(UsdShade.Material):
             mat_path = str(prim.GetPath())
             mat = UsdShade.Material(prim)
@@ -997,20 +1017,9 @@ def _get_usd_materials(*, node_path: str) -> dict[str, Any]:
             materials.append(mat_info)
             bindings_map[mat_path] = []
 
-    # Find bindings
-    gprims = []
-    for prim in stage.Traverse():
-        binding = UsdShade.MaterialBindingAPI(prim)
-        try:
-            bound = binding.GetDirectBinding()
-            mat_path = str(bound.GetMaterialPath())
-            if mat_path and mat_path in bindings_map:
-                bindings_map[mat_path].append(str(prim.GetPath()))
-        except Exception:
-            pass
-        with contextlib.suppress(Exception):
-            if prim.IsA(UsdGeom.Gprim):
-                gprims.append(prim)
+    for mat_path, prim_path in direct:
+        if mat_path in bindings_map:
+            bindings_map[mat_path].append(prim_path)
 
     # What each material is rendered on. bound_to only names the prims a
     # binding is authored on, so geometry bound through a parent or a

@@ -150,7 +150,7 @@ def _get_points(
     node_path: str,
     attributes: list[str] | None = None,
     start: int = 0,
-    count: int = 1000,
+    count: int = 200,
     group: str | None = None,
 ) -> dict[str, Any]:
     """Read point positions and attributes with pagination.
@@ -205,7 +205,7 @@ def _get_prims(
     node_path: str,
     attributes: list[str] | None = None,
     start: int = 0,
-    count: int = 1000,
+    count: int = 200,
     group: str | None = None,
 ) -> dict[str, Any]:
     """Read primitive data and attributes with pagination."""

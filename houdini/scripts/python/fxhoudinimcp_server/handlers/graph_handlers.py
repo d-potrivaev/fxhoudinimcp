@@ -11,6 +11,7 @@ from __future__ import annotations
 
 # Built-in
 import contextlib
+import copy
 import json
 import os
 import re
@@ -374,7 +375,24 @@ def _parm_names_for_type(
     before the build starts; *factory_expressions* maps each parm and parm
     tuple name whose components ship with an expression to {component:
     expression}, so a dry run can name the literals that will not take.
+
+    Results are cached per type for the session (probing was 90% of a dry
+    run's time), keyed on the HDA definition's modification time, unless a
+    strict menu's items come from a script: those can follow the scene (the
+    filecache `take` menu lists its takes).
     """
+    key = (node_type.category().name(), node_type.name(), _definition_stamp(node_type))
+    cached = _PARM_PROBE_CACHE.get(key)
+    if cached is not None:
+        result, types, expressions = cached
+        if parm_types is not None:
+            parm_types.update(types)
+        if factory_expressions is not None:
+            factory_expressions.update(copy.deepcopy(expressions))
+        return copy.deepcopy(result)
+    parm_types = {} if parm_types is None else parm_types
+    factory_expressions = {} if factory_expressions is None else factory_expressions
+    scene_menus = False
     probe = scratch.createNode(node_type.name())
     connectors = _connectors_of(probe)
     if parm_types is not None:
@@ -403,8 +421,21 @@ def _parm_names_for_type(
             items = list(parm.menuItems())
             if items and _is_strict_menu(template):
                 menus[parm.name()] = items
+                scene_menus = scene_menus or bool(template.itemGeneratorScript())
     probe.destroy()
-    return parm_names, tuple_names, menus, _instance_patterns(node_type), connectors
+    result = (parm_names, tuple_names, menus, _instance_patterns(node_type), connectors)
+    if not scene_menus:
+        _PARM_PROBE_CACHE[key] = (
+            copy.deepcopy(result),
+            dict(parm_types),
+            copy.deepcopy(factory_expressions),
+        )
+    return result
+
+
+# (category, type, definition stamp) -> (probe result, parm types, factory
+# expressions); see _parm_names_for_type.
+_PARM_PROBE_CACHE: dict[tuple, tuple] = {}
 
 
 def _menu_error(parm_name: str, value: Any, tokens: list[str]) -> str | None:
