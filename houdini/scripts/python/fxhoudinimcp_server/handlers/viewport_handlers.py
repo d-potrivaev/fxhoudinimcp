@@ -750,6 +750,9 @@ def set_current_network(network_path: str, other_objects: str | None = "hide") -
 ###### viewport.find_error_nodes
 
 
+_ERROR_NODE_CAP = 50
+
+
 def find_error_nodes(root_path: str = "/") -> dict:
     """Find all nodes with errors or warnings, recursively from a root path.
 
@@ -760,38 +763,38 @@ def find_error_nodes(root_path: str = "/") -> dict:
     if root is None:
         raise ValueError(f"Root path not found: {root_path}")
 
+    from fxhoudinimcp_server.handlers.graph_handlers import _condensed
+
     error_nodes = []
     warning_nodes = []
+    counts = {"errors": 0, "warnings": 0}
 
     def _check_node(node):
-        """Recursively check nodes for errors and warnings."""
-        try:
-            errors = node.errors()
-            if errors:
-                error_nodes.append(
-                    {
-                        "path": node.path(),
-                        "name": node.name(),
-                        "type": node.type().name(),
-                        "errors": list(errors),
-                    }
-                )
-        except (hou.OperationFailed, hou.ObjectWasDeleted, AttributeError) as e:
-            logger.debug("Could not read errors for node '%s': %s", node.path(), e)
+        """Recursively check nodes for errors and warnings.
 
-        try:
-            warnings = node.warnings()
-            if warnings:
-                warning_nodes.append(
-                    {
-                        "path": node.path(),
-                        "name": node.name(),
-                        "type": node.type().name(),
-                        "warnings": list(warnings),
-                    }
-                )
-        except (hou.OperationFailed, hou.ObjectWasDeleted, AttributeError) as e:
-            logger.debug("Could not read warnings for node '%s': %s", node.path(), e)
+        Messages are condensed (one upstream error repeats on every node
+        downstream of it) and each list holds the first 50 nodes; the counts
+        stay complete. `name` is gone: it is the tail of `path`.
+        """
+        for kind, reader, bucket in (
+            ("errors", node.errors, error_nodes),
+            ("warnings", node.warnings, warning_nodes),
+        ):
+            try:
+                messages = reader()
+            except (hou.OperationFailed, hou.ObjectWasDeleted, AttributeError) as e:
+                logger.debug("Could not read %s for node '%s': %s", kind, node.path(), e)
+                continue
+            if messages:
+                counts[kind] += 1
+                if len(bucket) < _ERROR_NODE_CAP:
+                    bucket.append(
+                        {
+                            "path": node.path(),
+                            "type": node.type().name(),
+                            kind: [_condensed(m) for m in messages],
+                        }
+                    )
 
         # Recurse into children
         try:
@@ -805,8 +808,8 @@ def find_error_nodes(root_path: str = "/") -> dict:
     return {
         "error_nodes": error_nodes,
         "warning_nodes": warning_nodes,
-        "error_count": len(error_nodes),
-        "warning_count": len(warning_nodes),
+        "error_count": counts["errors"],
+        "warning_count": counts["warnings"],
         "root_path": root_path,
     }
 

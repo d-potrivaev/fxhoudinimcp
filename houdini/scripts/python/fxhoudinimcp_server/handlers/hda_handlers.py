@@ -126,42 +126,50 @@ def _parm_template_to_dict(pt) -> dict:
 ###### hda.list_installed_hdas
 
 
-def list_installed_hdas(filter: str = None) -> dict:
-    """List all installed HDA files and their definitions.
+def list_installed_hdas(filter: str = None, limit: int = 100) -> dict:
+    """List installed HDA definitions, grouped by library file.
+
+    Unfiltered this answered every loaded definition, 3,636 on a stock 22.0
+    install with each row repeating its library path: about 150k tokens. It
+    is capped at *limit* definitions, with the total, and each file's path is
+    given once.
 
     Args:
         filter: Optional substring filter for HDA type names or file paths.
+        limit: Maximum definitions returned.
     """
-    hda_files = hou.hda.loadedFiles()
-    results = []
-
-    for hda_file in hda_files:
+    needle = as_text(filter, "filter").lower()
+    libraries: dict[str, list[dict]] = {}
+    total = 0
+    shown = 0
+    for hda_file in hou.hda.loadedFiles():
         try:
             definitions = hou.hda.definitionsInFile(hda_file)
         except Exception:
             definitions = []
-
-        needle = as_text(filter, "filter").lower()
         for defn in definitions:
             type_name = defn.nodeTypeName()
             if needle and needle not in type_name.lower() and needle not in hda_file.lower():
                 continue
-
-            results.append(
+            total += 1
+            if shown >= limit:
+                continue
+            shown += 1
+            libraries.setdefault(hda_file, []).append(
                 {
                     "type_name": type_name,
+                    "category": defn.nodeTypeCategory().name(),
                     "description": defn.description(),
-                    "library_file": hda_file,
                     "version": defn.version() if hasattr(defn, "version") else None,
                 }
             )
-
-    # Sort by type name
-    results.sort(key=lambda x: x["type_name"])
-
+    for rows in libraries.values():
+        rows.sort(key=lambda row: row["type_name"])
     return {
-        "hda_count": len(results),
-        "hdas": results,
+        "hda_count": total,
+        "returned": shown,
+        "truncated": total > shown,
+        "libraries": libraries,
         "filter_applied": filter,
     }
 

@@ -630,7 +630,7 @@ def _get_parameter_schema(
             return {
                 "node_path": node_path,
                 "error": f"Parameter '{parm_name}' not found",
-                "available_parameters": _available_parm_names(node),
+                "did_you_mean": suggest_parms(parm_name, parm_labels(node)),
             }
         return {
             "node_path": node_path,
@@ -654,11 +654,21 @@ def _get_parameter_schema(
         f = filter.lower()
         parm_infos = [p for p in parm_infos if f in p["name"].lower() or f in p["label"].lower()]
 
-    return {
+    # Unfiltered this was every visible template with up to 50 menu items each:
+    # 70 KB on a Pyro Solver. The first 60 in full, the rest by name.
+    shown = parm_infos if filter else parm_infos[:_SCHEMA_CAP]
+    result = {
         "node_path": node_path,
         "parameter_count": len(parm_infos),
-        "parameters": parm_infos,
+        "parameters": shown,
     }
+    if len(shown) < len(parm_infos):
+        result["not_shown"] = [p["name"] for p in parm_infos[len(shown) :]]
+        result["note"] = "Pass filter=... (or parm_name) for the full entries of the rest."
+    return result
+
+
+_SCHEMA_CAP = 60
 
 
 register_handler("parameters.get_parameter_schema", _get_parameter_schema)
@@ -1617,7 +1627,8 @@ def _get_parm_template_tree(
     type_name: str | None = None,
     context: str = "Sop",
     folder: Any = None,
-    max_entries: int = 400,
+    max_entries: int = 150,
+    include_tags: bool = False,
     **_: Any,
 ) -> dict[str, Any]:
     """The whole parameter interface as a tree -- folders, conditionals, menu
@@ -1649,6 +1660,10 @@ def _get_parm_template_tree(
     else:
         entries = [_template_tree_entry(entry) for entry in group.entries()]
 
+    if not include_tags:
+        # Tags were 34 of the 141 KB a Pyro Solver tree came back as; they
+        # matter when editing an interface, so they stay one flag away.
+        _drop_key(entries, "tags")
     total = _count_tree(entries)
     truncated = total > int(max_entries)
     if truncated:
@@ -1669,6 +1684,12 @@ def _get_parm_template_tree(
             f"folder=<label> or raise max_entries."
         )
     return result
+
+
+def _drop_key(entries: list, key: str) -> None:
+    for entry in entries:
+        entry.pop(key, None)
+        _drop_key(entry.get("children") or [], key)
 
 
 register_handler("parameters.get_parm_template_tree", _get_parm_template_tree)

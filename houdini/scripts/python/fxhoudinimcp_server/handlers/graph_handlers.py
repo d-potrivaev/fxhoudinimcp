@@ -1635,7 +1635,9 @@ def get_node_card(
         "is_generator": resolved.minNumInputs() == 0,
         "parm_count": len(parms),
         "parms_matched": matched,
-        "parms_omitted": omitted,
+        # Capped: 274 names (5.6 KB) on a Pyro Solver card filtered to a few.
+        "parms_omitted": omitted[:50],
+        **({"parms_omitted_count": len(omitted)} if len(omitted) > 50 else {}),
         "parms_truncated": truncated,
         "parms": parms,
         "multiparms": multiparms,

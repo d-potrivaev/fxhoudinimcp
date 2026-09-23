@@ -434,11 +434,6 @@ def list_cop_node_types(filter: str = None) -> dict:
                 "label": node_type.description(),
             }
             try:
-                type_info["icon"] = node_type.icon()
-            except (hou.OperationFailed, AttributeError) as e:
-                logger.debug("Could not read icon for COP type '%s': %s", type_name, e)
-                type_info["icon"] = None
-            try:
                 type_info["min_inputs"] = node_type.minNumInputs()
                 type_info["max_inputs"] = node_type.maxNumInputs()
             except (hou.OperationFailed, AttributeError) as e:
@@ -452,9 +447,12 @@ def list_cop_node_types(filter: str = None) -> dict:
     # Sort by name
     cop_types.sort(key=lambda x: x["name"])
 
+    # Capped with a count, like list_node_types; the icon path each row used
+    # to carry is dropped (get_node_info drops it too).
     return {
         "cop_type_count": len(cop_types),
-        "cop_types": cop_types,
+        "truncated": len(cop_types) > 200,
+        "cop_types": cop_types[:200],
         "filter_applied": filter,
     }
 

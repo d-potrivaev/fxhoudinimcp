@@ -256,12 +256,13 @@ def _prim_to_dict(
     summarised unless *full* is set, and `children` lists the prims under
     an instanceable prim's prototype when *instance_proxies* is set.
     """
-    info: dict[str, Any] = {
-        "path": str(prim.GetPath()),
-        "type": str(prim.GetTypeName()),
-        "is_active": prim.IsActive(),
-        "has_payload": prim.HasPayload(),
-    }
+    # is_active / has_payload only when they are not the default: true and
+    # false on nearly every row of a listing, about a third of each row.
+    info: dict[str, Any] = {"path": str(prim.GetPath()), "type": str(prim.GetTypeName())}
+    if not prim.IsActive():
+        info["is_active"] = False
+    if prim.HasPayload():
+        info["has_payload"] = True
     # An empty `children` on an instanceable prim is not an empty prim: its
     # contents live on the prototype, and only an instance-proxy walk sees
     # them. Say so, with a count, instead of letting [] read as "nothing".
@@ -479,6 +480,7 @@ def _list_usd_prims(
         raise hou.OperationFailed(f"Root prim not found at '{root_path}' on stage from {node_path}")
 
     results: list[dict[str, Any]] = []
+    truncated = False
     root_sdf_path = root.GetPath()
     root_depth = root_sdf_path.pathElementCount
 
@@ -511,11 +513,11 @@ def _list_usd_prims(
             if prim_kind != kind:
                 continue
 
-        results.append(_prim_to_dict(prim))
-
-        # Safety cap
-        if len(results) >= 5000:
+        # Capped lower than the old 5000 (about 450 KB), and said when it cuts.
+        if len(results) >= _PRIM_LIST_CAP:
+            truncated = True
             break
+        results.append(_prim_to_dict(prim))
 
     return {
         "node_path": node_path,
@@ -527,8 +529,12 @@ def _list_usd_prims(
         },
         "instance_proxies_included": proxies,
         "count": len(results),
+        "truncated": truncated,
         "prims": results,
     }
+
+
+_PRIM_LIST_CAP = 1000
 
 
 register_handler("lops.list_usd_prims", _list_usd_prims)
@@ -1174,18 +1180,21 @@ def _find_usd_prims(
 
     proxies = bool(traverse_instance_proxies)
     results: list[dict[str, Any]] = []
+    truncated = False
     for prim in _traverse(stage, None, proxies):
         prim_path = str(prim.GetPath())
         if fnmatch.fnmatch(prim_path, pattern) or pattern in prim_path:
-            results.append(_prim_to_dict(prim))
-            if len(results) >= 5000:
+            if len(results) >= _PRIM_LIST_CAP:
+                truncated = True
                 break
+            results.append(_prim_to_dict(prim))
 
     return {
         "node_path": node_path,
         "pattern": pattern,
         "instance_proxies_included": proxies,
         "count": len(results),
+        "truncated": truncated,
         "prims": results,
     }
 

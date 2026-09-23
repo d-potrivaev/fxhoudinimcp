@@ -748,13 +748,35 @@ def _intrinsic_table(
                 components.append({"index": component, **extremes})
         if components:
             stats[column] = {"components": components}
-    return {
+    # The stats cover every row; the rows returned are the first
+    # _INTRINSIC_ROWS_SHOWN plus the prims holding an extreme. 2000 full rows
+    # were up to 922 KB, while the question is almost always "which prims
+    # are the outliers", which the stats answer.
+    extreme = set()
+    for entry in stats.values():
+        for item in [entry, *entry.get("components", [])]:
+            extreme.update(item[key] for key in ("min_prim", "max_prim") if key in item)
+    shown = [
+        r for i, r in enumerate(rows) if i < _INTRINSIC_ROWS_SHOWN or r["prim_index"] in extreme
+    ]
+    result = {
         "total_prims": total_prims,
         "prim_count": len(rows),
         "intrinsics": names,
-        "prims": rows,
+        "prims": shown,
         "stats": stats,
     }
+    if len(shown) < len(rows):
+        result["rows_shown"] = len(shown)
+        result["note"] = (
+            f"Stats cover all {len(rows)} prims; rows shown are the first "
+            f"{_INTRINSIC_ROWS_SHOWN} and the prims holding an extreme. Ask for "
+            f"prim_indices to read specific rows."
+        )
+    return result
+
+
+_INTRINSIC_ROWS_SHOWN = 100
 
 
 #: Rows one batched call returns. Beyond it the caller gets a window and is

@@ -462,18 +462,19 @@ def _list_material_types(
             ):
                 continue
 
-            results.append(
-                {
-                    "name": type_name,
-                    "label": label,
-                    "category": cat_name,
-                }
-            )
+            results.append({"name": type_name, "label": label, "category": cat_name})
 
+    # Unfiltered this was every VOP and SHOP type, 76 KB. The first 200, and
+    # the count; a filter is the way to the rest.
+    shown = results[:_TYPE_LIST_CAP]
     return {
         "count": len(results),
-        "types": results,
+        "truncated": len(results) > len(shown),
+        "types": shown,
     }
+
+
+_TYPE_LIST_CAP = 200
 
 
 register_handler("materials.list_material_types", _list_material_types)

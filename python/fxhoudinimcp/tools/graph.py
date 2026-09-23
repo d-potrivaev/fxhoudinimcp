@@ -113,7 +113,7 @@ async def get_node_card(
     node_type: str,
     context: str = "Sop",
     parm_filter: str | None = None,
-    include_help: bool = True,
+    include_help: bool | None = None,
 ) -> dict:
     """Get the authoritative documentation card for a node type, straight
     from the running Houdini: connectors in order (`inputs` / `outputs`
@@ -136,13 +136,18 @@ async def get_node_card(
             nodes inside a material network), "Dop", "Cop", "Chop", "Top",
             "Object", "Driver"; also "Cop2", "Shop", "VopNet".
         parm_filter: Substring filter for the parameter list.
-        include_help: False drops the help text (about 4 KB per card) when
-            only parameter names or connectors are needed.
+        include_help: The node's help text (about 4 KB). Default: included
+            for a whole card, left out when parm_filter asks for specific
+            parameters. Pass True or False to decide.
     """
     bridge = _get_bridge(ctx)
     params: dict[str, Any] = {"node_type": node_type, "context": context}
     if parm_filter is not None:
         params["parm_filter"] = parm_filter
+    # A filtered card is a question about a few parameters; the help text was
+    # 5 of its 7 KB on a Pyro Solver.
+    if include_help is None:
+        include_help = parm_filter is None
     if not include_help:
         params["include_help"] = False
     return await bridge.execute("graph.get_node_card", params)

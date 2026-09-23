@@ -775,7 +775,7 @@ def _build_scheduler_info(sched_node: hou.Node) -> dict:
 ###### tops.get_failed_work_items
 
 
-def get_failed_work_items(node_path: str, limit: int = 50) -> dict:
+def get_failed_work_items(node_path: str, limit: int = 10) -> dict:
     """List the work items that failed on a TOP node, with what they were doing.
 
     Args:
@@ -785,18 +785,35 @@ def get_failed_work_items(node_path: str, limit: int = 50) -> dict:
     node = _get_top_node(node_path)
     pdg_node = _get_pdg_node(node)
     failed = []
+    total = 0
+    seen_logs: dict[str, str] = {}
     for wi in pdg_node.workItems:
         if _work_item_state_name(wi.state) != "cooked_fail":
+            continue
+        total += 1
+        if len(failed) >= limit:
             continue
         info = _work_item_to_dict(wi)
         info.pop("attributes", None)
         with_log = _work_item_log(wi)
         if with_log:
-            info["log_tail"] = with_log[-2000:]
+            tail = with_log[-2000:]
+            # A wedge failing fifty times usually fails fifty times the same
+            # way: 2 KB each, 110 KB of one traceback. Later copies point back.
+            key = tail.split("\n", 1)[-1]
+            if key in seen_logs:
+                info["log_tail_same_as"] = seen_logs[key]
+            else:
+                seen_logs[key] = info["name"]
+                info["log_tail"] = tail
         failed.append(info)
-        if len(failed) >= limit:
-            break
-    return {"node_path": node.path(), "failed_count": len(failed), "failed": failed}
+    # failed_count was the capped count, not how many failed.
+    return {
+        "node_path": node.path(),
+        "failed_count": total,
+        "returned": len(failed),
+        "failed": failed,
+    }
 
 
 def _log_uri_to_path(uri: str) -> str:
