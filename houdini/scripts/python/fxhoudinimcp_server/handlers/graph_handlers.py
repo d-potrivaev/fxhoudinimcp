@@ -837,6 +837,11 @@ def _geometry_summary(node: hou.Node) -> dict[str, Any] | None:
         "bbox_max": list(bbox.maxvec()),
         "point_attribs": [a.name() for a in geo.pointAttribs()][:30],
     }
+    with contextlib.suppress(Exception):
+        from fxhoudinimcp_server.handlers.geometry_handlers import prim_type_counts
+
+        if types := prim_type_counts(geo):
+            summary["prim_types"] = types
     # A heightfield or a pyro source is volumes: "7 points, attrib P" said
     # nothing about which layers exist or whether they hold anything.
     with contextlib.suppress(Exception):
@@ -1979,7 +1984,8 @@ def cook_frame_range(
             row["measure_error"] = str(exc).splitlines()[0][:200]
         frames.append(row)
 
-    return {
+    shown = _thin_frame_rows(frames)
+    result: dict[str, Any] = {
         "node_path": node_path,
         "start": start,
         "end": end,
@@ -1993,8 +1999,39 @@ def cook_frame_range(
         # pinned-everything cloth or an unconnected source looks like.
         "static": len(frames) > 1 and all(_shape(row) == _shape(frames[0]) for row in frames),
         "current_frame": hou.frame(),
-        "frames": frames,
+        "frames": shown,
     }
+    if frames:
+        slowest = max(frames, key=lambda row: row["cook_ms"])
+        result["slowest_frame"] = {"frame": slowest["frame"], "cook_ms": slowest["cook_ms"]}
+    if len(shown) < len(frames):
+        result["frames_shown"] = len(shown)
+        result["frames_note"] = (
+            "Rows are evenly spaced frames plus every frame with an error or "
+            "warning; the totals above cover every frame. Cook a narrower range "
+            "for every row."
+        )
+    return result
+
+
+# Rows returned when a range is long: 48 frames of a crowd were 15 KB of rows
+# that differed in the fourth digit, and 240 would have been 75 KB.
+_FRAME_ROWS_SHOWN = 25
+
+
+def _thin_frame_rows(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Evenly spaced rows (first and last included) plus every row with a problem."""
+    if len(frames) <= _FRAME_ROWS_SHOWN:
+        return frames
+    last = len(frames) - 1
+    keep = {round(i * last / (_FRAME_ROWS_SHOWN - 1)) for i in range(_FRAME_ROWS_SHOWN)}
+    flagged = [
+        i
+        for i, row in enumerate(frames)
+        if row.get("errors") or row.get("cook_error") or row.get("warnings")
+    ]
+    keep.update(flagged[:_FRAME_ROWS_SHOWN])
+    return [frames[i] for i in sorted(keep)]
 
 
 register_handler("graph.cook_frame_range", cook_frame_range)

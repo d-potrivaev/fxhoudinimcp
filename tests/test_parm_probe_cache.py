@@ -66,3 +66,15 @@ def test_script_filled_menu_is_probed_every_time(monkeypatch):
     _probe(scratch, node_type, monkeypatch)
     _probe(scratch, node_type, monkeypatch)
     assert scratch.createNode.call_count == 2
+
+
+def test_long_frame_ranges_keep_spaced_rows_and_every_problem():
+    rows = [{"frame": float(f), "cook_ms": 1.0} for f in range(1, 241)]
+    rows[101]["errors"] = ["boom"]  # frame 102, off the spaced rows
+    shown = graph._thin_frame_rows(rows)
+    frames = [row["frame"] for row in shown]
+    assert frames[0] == 1.0 and frames[-1] == 240.0
+    assert 102.0 in frames
+    assert len(shown) == graph._FRAME_ROWS_SHOWN + 1
+    short = rows[:10]
+    assert graph._thin_frame_rows(short) is short

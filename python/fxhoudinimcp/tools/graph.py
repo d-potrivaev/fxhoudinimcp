@@ -197,6 +197,9 @@ async def cook_frame_range(
     time, errors, counts, bounding box and attribute aggregates come back in
     ONE round trip instead of one per frame. `static: true` means counts and
     bounds never changed over the range: the node cooks but does nothing.
+    Past 25 frames the rows are 25 evenly spaced frames plus every frame with
+    an error or warning (`frames_shown`); totals, `static` and
+    `slowest_frame` still cover every frame.
 
     Prefer this over set_frame in a loop, and over stepping by hand: a 100-frame
     check is one call rather than 100. The frame is left where the cook ended,
