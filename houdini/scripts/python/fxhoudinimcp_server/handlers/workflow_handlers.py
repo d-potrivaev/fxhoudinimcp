@@ -171,6 +171,7 @@ def _setup_pyro_sim_sop(
     objmerge: hou.Node,
     substeps: int,
     all_nodes: list[str],
+    res_scale: float = 1.0,
 ) -> dict:
     """Build a SOP-level Pyro simulation (Houdini 20+).
 
@@ -219,6 +220,13 @@ def _setup_pyro_sim_sop(
 
     # Set substeps
     _set_parm_safe(pyrosolver, "substeps", substeps)
+    # res_scale was accepted and never used. 2.0 means twice the resolution:
+    # half the voxel size.
+    if res_scale <= 0:
+        raise ValueError(f"res_scale must be positive, got {res_scale}")
+    divsize = pyrosolver.parm("divsize")
+    if divsize is not None and res_scale != 1.0:
+        divsize.set(divsize.eval() / res_scale)
 
     # -- File Cache
     print("[workflow] Creating File Cache SOP")
@@ -439,7 +447,7 @@ def _setup_pyro_sim(
     # -- Try modern SOP-level Pyro first, fall back to DOP approach
     try:
         print("[workflow] Attempting SOP-level Pyro workflow (Houdini 20+)")
-        result = _setup_pyro_sim_sop(geo, objmerge, substeps, all_nodes)
+        result = _setup_pyro_sim_sop(geo, objmerge, substeps, all_nodes, res_scale)
         print(f"[workflow] Pyro simulation '{name}' setup complete (SOP approach)")
     except hou.OperationFailed:
         print("[workflow] SOP-level Pyro not available, falling back to DOP approach")
@@ -453,6 +461,10 @@ def _setup_pyro_sim(
                     pass
 
         result = _setup_pyro_sim_dop(geo, objmerge, substeps, all_nodes)
+        if res_scale != 1.0:
+            result["warning"] = (
+                "res_scale is applied only by the SOP-level Pyro Solver; the DOP fallback ignored it."
+            )
         print(f"[workflow] Pyro simulation '{name}' setup complete (DOP approach)")
 
     # Augment the result with source wiring info so the AI client

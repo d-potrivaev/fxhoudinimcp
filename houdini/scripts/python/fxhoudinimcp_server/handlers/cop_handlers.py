@@ -388,8 +388,11 @@ def set_cop_flags(
             flags_set["display_error"] = str(e)
 
     if export_flag is not None:
+        # Copernicus COPs have setExportFlag, not setRenderFlag (COP2's name),
+        # so this always failed while the call still said success.
+        setter = "setExportFlag" if hasattr(node, "setExportFlag") else "setRenderFlag"
         try:
-            node.setRenderFlag(export_flag)
+            getattr(node, setter)(export_flag)
             flags_set["export_flag"] = export_flag
         except Exception as e:
             flags_set["export_flag_error"] = str(e)
@@ -402,7 +405,7 @@ def set_cop_flags(
             flags_set["compress_error"] = str(e)
 
     return {
-        "success": True,
+        "success": not any(key.endswith("_error") for key in flags_set),
         "node_path": node.path(),
         "flags_set": flags_set,
     }

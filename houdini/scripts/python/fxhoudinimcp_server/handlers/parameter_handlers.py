@@ -727,14 +727,22 @@ def _revert_parameter(node_path: str, parm_name: str, **_: Any) -> dict[str, Any
     """Revert a parameter to its default value."""
     parm = _resolve_parm(node_path, parm_name)
 
+    # revertToDefaults() alone leaves an expression and keyframes in place
+    # (measured on 22.0.368: $F*2 and two keys survived it), while this
+    # reported reverted: True. Deleting the keyframes first clears both, and
+    # a factory default expression ($FSTART on a ROP's f1) still comes back.
+    parm.deleteAllKeyframes()
     parm.revertToDefaults()
 
-    return {
+    result = {
         "node_path": node_path,
         "parm_name": parm_name,
         "reverted": True,
         "value": _serialize_value(parm.eval()),
     }
+    if (expression := _expression_of(parm)) is not None:
+        result["default_expression"] = expression
+    return result
 
 
 register_handler("parameters.revert_parameter", _revert_parameter)

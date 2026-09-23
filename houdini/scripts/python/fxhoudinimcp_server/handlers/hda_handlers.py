@@ -279,9 +279,10 @@ def install_hda(file_path: str, force: bool = False) -> dict:
 
     Args:
         file_path: Path to the HDA file to install.
-    require_inside_project_root(file_path, "HDA file")
         force: If True, force reinstall even if already loaded.
     """
+    # This guard sat inside the docstring above, where it never ran.
+    require_inside_project_root(file_path, "HDA file")
     if not os.path.isfile(file_path):
         raise FileNotFoundError(f"HDA file not found: {file_path}")
 

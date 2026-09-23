@@ -345,19 +345,24 @@ def _clear_cache(
 
     deleted_count = 0
     freed_bytes = 0
+    failed: list[str] = []
+    no_frame: list[str] = []
 
     for filepath in existing_files:
         should_delete = True
 
-        # If frame_range is specified, only delete matching frames
+        # If frame_range is specified, only delete matching frames. The last
+        # digit run before the extension is the frame, so name_0001.bgeo.sc
+        # counts as well as name.0001.bgeo.sc.
         if frame_range is not None and len(frame_range) >= 2:
-            match = re.search(r"\.(\d+)\.", os.path.basename(filepath))
-            if match:
-                frame_num = int(match.group(1))
+            runs = re.findall(r"(\d+)(?=\.)", os.path.basename(filepath))
+            if runs:
+                frame_num = int(runs[-1])
                 if frame_num < frame_range[0] or frame_num > frame_range[1]:
                     should_delete = False
             else:
                 should_delete = False
+                no_frame.append(filepath)
 
         if should_delete:
             try:
@@ -365,16 +370,24 @@ def _clear_cache(
                 os.remove(filepath)
                 deleted_count += 1
                 freed_bytes += file_size
-            except OSError:
-                pass
+            except OSError as exc:
+                # A file locked by Houdini or OneDrive used to vanish from the
+                # count with nothing said.
+                failed.append(f"{filepath}: {exc.strerror or exc}")
 
     freed_mb = round(freed_bytes / (1024 * 1024), 2)
 
-    return {
+    result = {
         "node_path": node_path,
+        "success": not failed,
         "deleted_count": deleted_count,
         "freed_mb": freed_mb,
     }
+    if failed:
+        result["failed"] = failed[:20]
+    if no_frame:
+        result["skipped_no_frame_number"] = no_frame[:20]
+    return result
 
 
 register_handler("cache.clear_cache", _clear_cache)

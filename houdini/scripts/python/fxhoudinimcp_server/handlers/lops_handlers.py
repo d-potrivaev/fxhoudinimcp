@@ -797,11 +797,15 @@ def _create_lop_node(
 
     node = parent.createNode(lop_type, node_name=name)
 
-    # Set prim_path parameter if the node type has one
+    # Set prim_path parameter if the node type has one. The reply used to echo
+    # prim_path back even for types with neither parm (assignmaterial,
+    # materiallibrary), as if it had been applied.
+    prim_path_applied = None
     if prim_path is not None:
         parm = node.parm("primpath")
         if parm is None:
             parm = node.parm("primpattern")
+        prim_path_applied = parm is not None
         if parm is not None:
             parm.set(prim_path)
 
@@ -813,6 +817,14 @@ def _create_lop_node(
         "type": node.type().name(),
         "name": node.name(),
         "prim_path": prim_path,
+        **(
+            {}
+            if prim_path_applied is not False
+            else {
+                "prim_path_applied": False,
+                "warning": f"{node.type().name()} has no primpath or primpattern parm; prim_path was not set.",
+            }
+        ),
     }
 
 

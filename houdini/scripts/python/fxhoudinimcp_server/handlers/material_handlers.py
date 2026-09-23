@@ -16,6 +16,7 @@ import hou
 from fxhoudinimcp_server.config import layout_if_enabled, place_new_node
 from fxhoudinimcp_server.dispatcher import register_handler
 from fxhoudinimcp_server.errors import as_text, readable_message
+from fxhoudinimcp_server.handlers.node_handlers import _component_default, _is_at_default
 
 ###### Helpers
 
@@ -215,10 +216,9 @@ def _get_material_info(*, node_path: str, **_: Any) -> dict[str, Any]:
     for parm in node.parms():
         try:
             val = parm.eval()
-            default = parm.parmTemplate().defaultValue()
-            if isinstance(default, tuple) and len(default) == 1:
-                default = default[0]
-            if val != default:
+            # Per component, as node_handlers does: the tuple default made
+            # every vector component read as changed.
+            if not _is_at_default(parm, val, _component_default(parm)):
                 params[parm.name()] = val
         except Exception:
             pass
