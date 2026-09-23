@@ -93,3 +93,56 @@ class TestCompactJson:
         data = json.loads(compact_json({"a": [{"b": (1.0, "x")}], "path": object}))
         assert data["a"] == [{"b": [1.0, "x"]}]
         assert isinstance(data["path"], str)
+
+
+###### Second live session: simulations
+
+
+import fxhoudinimcp_server.handlers.cache_handlers as cache  # noqa: E402
+import fxhoudinimcp_server.handlers.graph_handlers as graph  # noqa: E402
+import fxhoudinimcp_server.ui as ui  # noqa: E402
+
+
+class TestSimulationEvidence:
+    def test_a_range_whose_bounds_never_move_is_static(self):
+        row = {"points": 306, "prims": 203, "bbox": [[0, 0, 0], [1, 1, 1]]}
+        fallen = {**row, "bbox": [[0, -1, 0], [1, 0, 1]]}
+        assert graph._shape(row) == graph._shape(dict(row))
+        assert graph._shape(row) != graph._shape(fallen)
+
+    def test_the_sim_io_nodes_count_as_caches(self):
+        for type_name in ("rbdio::2.0", "vellumio::2.0", "filecache::2.0", "rop_geometry"):
+            node = MagicMock()
+            node.type.return_value.name.return_value = type_name
+            assert cache._is_cache_node(node), type_name
+
+    def test_an_unknown_viewer_mode_is_refused(self, monkeypatch):
+        monkeypatch.setattr(ui, "ui_available", lambda: True)
+        try:
+            ui.set_other_objects("invisible")
+        except ValueError as exc:
+            assert "hide" in str(exc)
+        else:
+            raise AssertionError("expected ValueError")
+        assert ui.set_other_objects(None) is None
+
+
+class TestSolverMessages:
+    def test_repeated_lines_are_dropped_and_the_rest_capped(self):
+        noise = "\n".join(
+            f"   merge_field: Error cooking SOP: FLIP_DATA {i % 3}" for i in range(40)
+        )
+        text = graph._condensed(noise + "\nRequired attribute pscale is missing.")
+        assert text.count("FLIP_DATA 0") == 1
+        assert "pscale is missing" in text
+
+    def test_long_distinct_messages_say_how_much_was_cut(self):
+        text = graph._condensed("\n".join(f"line {i}" for i in range(20)))
+        assert text.endswith("... 8 more distinct lines")
+
+    def test_vectors_report_each_axis(self):
+        entry = {"min": -3.7, "max": 3.7, "mean": 0.2, "sum": 9.0, "count": 5}
+        entry["per_component"] = [{"min": -3.7, "max": 3.7}, {"min": -0.1, "max": 2.8}]
+        row = graph._frame_stats(entry)
+        assert row["per_axis"][1] == [-0.1, 2.8]
+        assert "count" not in row

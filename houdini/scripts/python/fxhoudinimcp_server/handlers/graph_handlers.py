@@ -627,6 +627,22 @@ def _attrib_size_warnings(node: hou.Node) -> list[str]:
     ]
 
 
+_MESSAGE_LINES = 12
+
+
+def _condensed(message: str) -> str:
+    """A node message with repeated lines dropped and the rest capped.
+
+    An HDA solver reports each failing inner node once per field it merges:
+    a FLIP solver missing pscale came back as ~40 lines, the one that named
+    the cause buried among copies of "Error cooking SOP: .../FLIP_DATA".
+    """
+    lines = list(dict.fromkeys(line.strip() for line in message.splitlines() if line.strip()))
+    if len(lines) > _MESSAGE_LINES:
+        lines = lines[:_MESSAGE_LINES] + [f"... {len(lines) - _MESSAGE_LINES} more distinct lines"]
+    return "\n".join(lines)
+
+
 def _node_report(node: hou.Node) -> dict[str, Any]:
     report: dict[str, Any] = {
         "name": node.name(),
@@ -635,8 +651,9 @@ def _node_report(node: hou.Node) -> dict[str, Any]:
         # A dangling channel reference cooks clean in Houdini, so it is reported
         # as an error here: otherwise a build reads healthy while it is broken.
         # ponytail: scans every parm of every node; cache per verify if large networks get slow.
-        "errors": list(node.errors()) + [e for p in node.parms() for e in broken_references(p)],
-        "warnings": list(node.warnings()) + _attrib_size_warnings(node),
+        "errors": [_condensed(e) for e in node.errors()]
+        + [e for p in node.parms() for e in broken_references(p)],
+        "warnings": [_condensed(w) for w in node.warnings()] + _attrib_size_warnings(node),
     }
     with contextlib.suppress(Exception):
         report["bypassed"] = node.isBypassed()
@@ -1594,6 +1611,18 @@ _MAX_FRAMES = 480
 _FRAME_ATTRIB_CAP = 8
 
 
+def _frame_stats(entry: dict[str, Any]) -> dict[str, Any]:
+    """One attribute's aggregates for a frame row, per axis for a vector.
+
+    min/max over all of P's components mixes x, y and z, so "did the liquid
+    land on the ground" could not be read off it; the y range answers that.
+    """
+    row = {k: v for k, v in entry.items() if k in ("min", "max", "mean", "sum")}
+    if entry.get("per_component"):
+        row["per_axis"] = [[c["min"], c["max"]] for c in entry["per_component"]]
+    return row
+
+
 def _frame_measurement(
     node: hou.Node,
     attribs: list[str] | None,
@@ -1605,8 +1634,14 @@ def _frame_measurement(
     if geo is None:
         row["points"] = row["prims"] = 0
         return row
-    row["points"] = len(geo.iterPoints())
-    row["prims"] = len(geo.iterPrims())
+    # Intrinsics, not len(iterPoints()): that builds a Python object per point,
+    # every frame, on exactly the heavy sims this tool is for.
+    row["points"] = geo.intrinsicValue("pointcount")
+    row["prims"] = geo.intrinsicValue("primitivecount")
+    # Counts stay flat while pieces fall or cloth drapes; the bounds are the
+    # cheap proof that anything moved.
+    bbox = geo.boundingBox()
+    row["bbox"] = [list(bbox.minvec()), list(bbox.maxvec())]
 
     if attribs:
         from fxhoudinimcp_server.handlers.geometry_handlers import _get_attrib_stats
@@ -1616,10 +1651,7 @@ def _frame_measurement(
             attribs=attribs[:_FRAME_ATTRIB_CAP],
             attrib_class="point",
         )
-        row["attribs"] = {
-            name: {k: v for k, v in entry.items() if k in ("min", "max", "mean", "sum")}
-            for name, entry in stats["stats"].items()
-        }
+        row["attribs"] = {name: _frame_stats(entry) for name, entry in stats["stats"].items()}
         if stats["missing"]:
             row["missing_attribs"] = stats["missing"]
 
@@ -1636,6 +1668,10 @@ def _frame_measurement(
             for entry in info["volumes"]
         ]
     return row
+
+
+def _shape(row: dict[str, Any]) -> tuple:
+    return row.get("points"), row.get("prims"), json.dumps(row.get("bbox"))
 
 
 def cook_frame_range(
@@ -1710,8 +1746,12 @@ def cook_frame_range(
         if cook_error:
             row["cook_error"] = cook_error
         with contextlib.suppress(hou.OperationFailed):
-            row["errors"] = [e.splitlines()[0][:200] for e in node.errors()]
-            row["warnings"] = [w.splitlines()[0][:200] for w in node.warnings()]
+            # Only when there are any: an empty pair per frame is most of a
+            # 240-frame answer.
+            if errors := [e.splitlines()[0][:200] for e in node.errors()]:
+                row["errors"] = errors
+            if warnings := [w.splitlines()[0][:200] for w in node.warnings()]:
+                row["warnings"] = warnings
         if row.get("errors") and first_error_frame is None:
             first_error_frame = frame
         try:
@@ -1729,6 +1769,10 @@ def cook_frame_range(
         "total_cook_ms": round(total_ms, 1),
         "mean_cook_ms": round(total_ms / len(frames), 1) if frames else 0.0,
         "first_error_frame": first_error_frame,
+        # True when counts and bounds never changed: the node cooks, but over
+        # this range it does nothing, which is what a sim with no gravity, a
+        # pinned-everything cloth or an unconnected source looks like.
+        "static": len(frames) > 1 and all(_shape(row) == _shape(frames[0]) for row in frames),
         "current_frame": hou.frame(),
         "frames": frames,
     }

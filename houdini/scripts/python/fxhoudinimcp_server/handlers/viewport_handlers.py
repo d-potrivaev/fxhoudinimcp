@@ -17,7 +17,7 @@ import hou
 
 # Internal
 from fxhoudinimcp_server.dispatcher import register_handler
-from fxhoudinimcp_server.ui import require_ui
+from fxhoudinimcp_server.ui import require_ui, set_other_objects
 
 logger = logging.getLogger(__name__)
 
@@ -708,11 +708,17 @@ def capture_network_editor(
 ###### viewport.set_current_network
 
 
-def set_current_network(network_path: str) -> dict:
+def set_current_network(network_path: str, other_objects: str | None = "hide") -> dict:
     """Navigate the network editor to a specific network path.
+
+    The viewer follows the network editor into the object, and *other_objects*
+    sets what it draws of every other object (the viewport's Y hotkey): "hide"
+    by default, so work in one object is not drawn over, and slowed by, the
+    rest of the scene. No display flag changes.
 
     Args:
         network_path: Path to the network to navigate to (e.g. '/obj/geo1').
+        other_objects: "hide", "ghost", "show", or None to leave the viewer as is.
     """
     node = hou.node(network_path)
     if node is None:
@@ -737,6 +743,7 @@ def set_current_network(network_path: str) -> dict:
         "success": True,
         "network_path": network_path,
         "pane_name": network_editor.name(),
+        "other_objects": set_other_objects(other_objects),
     }
 
 

@@ -53,15 +53,11 @@ def _get_node(node_path: str) -> hou.Node:
 
 
 def _is_cache_node(node: hou.Node) -> bool:
-    """Check if a node is a cache-type node (filecache or rop_geometry)."""
-    type_name = node.type().name()
-    return type_name in (
-        "filecache",
-        "filecache::2.0",
-        "rop_geometry",
-        "rop_alembic",
-        "file",
-    )
+    """Check if a node is a cache-type node (filecache, the sim I/O nodes, ROPs)."""
+    # Versions stripped: rbdio and vellumio are ::2.0 in 22.0, and the RBD and
+    # Vellum setups cache with them rather than a filecache.
+    base = node.type().name().split("::")[0]
+    return base in ("filecache", "rbdio", "vellumio", "rop_geometry", "rop_alembic", "file")
 
 
 # The write path first. On File Cache 2.0 `sopoutput` is where frames go and

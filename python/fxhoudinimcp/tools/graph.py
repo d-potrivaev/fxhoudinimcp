@@ -185,8 +185,9 @@ async def cook_frame_range(
     This is how you advance a sequential solver and how you prove a simulation
     is doing something. Frames are cooked in order, so a SOP solver, a DOP
     network or an animated chain all accumulate correctly, and per-frame cook
-    time, errors, counts and attribute aggregates come back in ONE round trip
-    instead of one per frame.
+    time, errors, counts, bounding box and attribute aggregates come back in
+    ONE round trip instead of one per frame. `static: true` means counts and
+    bounds never changed over the range: the node cooks but does nothing.
 
     Prefer this over set_frame in a loop, and over stepping by hand: a 100-frame
     check is one call rather than 100. The frame is left where the cook ended,
