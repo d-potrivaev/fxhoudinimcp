@@ -184,3 +184,35 @@ class TestStartRenderErrors:
         mock_bridge.execute.return_value = {"success": True, "wrote_files": True}
         await start_render(mock_ctx, "/stage/render")
         assert mock_bridge.execute.call_count == 1
+
+
+###### Third live session: assets
+
+
+import fxhoudinimcp_server.handlers.hda_handlers as hda  # noqa: E402
+
+
+class TestCreateHdaKeepsTheInterface:
+    def test_spares_move_into_the_definition_with_their_values(self, monkeypatch):
+        failed = type("OperationFailed", (Exception,), {})
+        monkeypatch.setattr(hda.hou, "OperationFailed", failed)
+        parm = MagicMock()
+        parm.name.return_value = "seed"
+        parm.tuple.return_value.name.return_value = "seed"
+        parm.expression.side_effect = failed  # a plain value, no expression
+        parm.eval.return_value = 7
+        node = MagicMock()
+        node.spareParms.return_value = [parm]
+        type_parm = node.parm.return_value
+
+        assert hda._promote_spares_to_definition(node) == ["seed"]
+        node.removeSpareParms.assert_called_once()
+        definition = node.type.return_value.definition.return_value
+        definition.setParmTemplateGroup.assert_called_once_with(node.parmTemplateGroup.return_value)
+        type_parm.set.assert_called_once_with(7)
+
+    def test_a_subnet_without_spares_is_left_alone(self):
+        node = MagicMock()
+        node.spareParms.return_value = []
+        assert hda._promote_spares_to_definition(node) == []
+        node.removeSpareParms.assert_not_called()

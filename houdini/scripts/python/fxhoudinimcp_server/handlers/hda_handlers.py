@@ -408,16 +408,26 @@ def create_hda(
             f"Node {node_path} is not a subnet. Only subnet nodes can be converted to HDAs."
         )
 
+    # createDigitalAsset defaults to max_num_inputs=0, so a subnet that processes
+    # its input geometry became an asset with no input at all.
+    inputs_used = len(node.inputs())
+    with contextlib.suppress(Exception):
+        for index, item in enumerate(node.indirectInputs()):
+            if item.outputConnections():
+                inputs_used = max(inputs_used, index + 1)
+
     try:
         hda_node = node.createDigitalAsset(
             name=type_name,
             hda_file_name=hda_file,
             description=label,
             version=version,
+            max_num_inputs=inputs_used,
         )
     except Exception as e:
         raise ValueError(f"Failed to create HDA: {readable_message(e)}") from e
 
+    promoted = _promote_spares_to_definition(hda_node)
     return {
         "success": True,
         "node_path": hda_node.path(),
@@ -425,7 +435,48 @@ def create_hda(
         "type_name": type_name,
         "label": label,
         "version": version,
+        "max_num_inputs": inputs_used,
+        "promoted_parameters": promoted,
     }
+
+
+def _promote_spares_to_definition(node: hou.Node) -> list[str]:
+    """Move a converted subnet's spare parameters into its asset definition.
+
+    createDigitalAsset leaves them as spares on the one converted node: the
+    definition's interface stayed empty, every new instance came without the
+    knobs, and its internals' ch("../seed") read parameters that were not there.
+    Values, expressions and keyframes on the converted node are kept.
+    """
+    spares = list(node.spareParms())
+    if not spares:
+        return []
+    group = node.parmTemplateGroup()
+    saved = {}
+    for parm in spares:
+        try:
+            saved[parm.name()] = ("expr", parm.expression(), parm.expressionLanguage())
+        except hou.OperationFailed:
+            saved[parm.name()] = (
+                "value",
+                parm.unexpandedString() if _is_string(parm) else parm.eval(),
+            )
+    node.removeSpareParms()
+    node.type().definition().setParmTemplateGroup(group)
+    for name, stored in saved.items():
+        parm = node.parm(name)
+        if parm is None:
+            continue
+        with contextlib.suppress(Exception):
+            if stored[0] == "expr":
+                parm.setExpression(stored[1], stored[2])
+            else:
+                parm.set(stored[1])
+    return sorted({p.tuple().name() for p in spares})
+
+
+def _is_string(parm: hou.Parm) -> bool:
+    return parm.parmTemplate().type() == hou.parmTemplateType.String
 
 
 _FOLDER_TYPES = {

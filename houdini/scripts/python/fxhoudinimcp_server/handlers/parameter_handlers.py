@@ -520,6 +520,29 @@ def _set_parameters(
     results: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     for name, value in params.items():
+        # {"expr": ..., "language": ...} is build_network's spelling for an
+        # expression. Here it used to fall through to a literal write that
+        # stored 0 and reported success, so the expression silently vanished.
+        if isinstance(value, dict):
+            parm = node.parm(name)
+            if "expr" not in value or parm is None:
+                problem = "no such parameter" if parm is None else 'a dict value needs "expr"'
+                errors.append({"parm_name": name, "error": f"{problem}: {value!r}"})
+                continue
+            language = str(value.get("language", "hscript")).lower()
+            try:
+                parm.setExpression(
+                    str(value["expr"]),
+                    hou.exprLanguage.Python if language == "python" else hou.exprLanguage.Hscript,
+                )
+            except Exception as exc:
+                errors.append({"parm_name": name, "error": str(exc)})
+                continue
+            entry = {"parm_name": name, "expression": str(value["expr"])}
+            if broken := broken_references(parm):
+                entry["warning"] = "; ".join(broken)
+            results.append(entry)
+            continue
         # A list on a vector name sets the whole tuple, exactly as the single
         # setter does. The batch path used to know only per-component names,
         # which made "prefer set_parameters" and "set a light colour" collide.

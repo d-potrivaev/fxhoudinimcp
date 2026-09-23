@@ -102,7 +102,9 @@ async def set_parameters(
 
     Args:
         node_path: Node path.
-        params: Mapping of parameter names to values.
+        params: Mapping of parameter names to values. A value written
+            {"expr": "...", "language": "hscript" | "python"} is set as an
+            expression, as in build_network.
         override_expression: Remove expressions standing in the way.
     """
     bridge = _get_bridge(ctx)
