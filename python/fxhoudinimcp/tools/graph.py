@@ -95,6 +95,10 @@ async def verify_network(ctx: Context, parent_path: str) -> dict:
     Call this after building or modifying a network, the way an artist
     middle-clicks nodes: if `healthy` is false or `error_nodes` is
     non-empty, fix those nodes before telling the user anything is done.
+    Each node lists `errors`, `warnings`, `bypassed` and `display` only when
+    it has them; absent means none. For a LOP network the evidence is the
+    stage (prims, cameras, lights, gprims without a material), for a COP
+    network the image layer (resolution, channel ranges).
 
     Args:
         parent_path: Network to verify (e.g. "/obj/geo1").

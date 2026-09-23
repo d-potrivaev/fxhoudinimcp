@@ -686,19 +686,26 @@ def _condensed(message: str) -> str:
 
 
 def _node_report(node: hou.Node) -> dict[str, Any]:
-    report: dict[str, Any] = {
-        "name": node.name(),
-        "path": node.path(),
-        "type": node.type().name(),
-        # A dangling channel reference cooks clean in Houdini, so it is reported
-        # as an error here: otherwise a build reads healthy while it is broken.
-        # ponytail: scans every parm of every node; cache per verify if large networks get slow.
-        "errors": [_condensed(e) for e in node.errors()]
-        + [e for p in node.parms() for e in broken_references(p)],
-        "warnings": [_condensed(w) for w in node.warnings()] + _attrib_size_warnings(node),
-    }
+    """Path and type, plus errors / warnings / bypassed only when there are any.
+
+    A clean node used to carry errors: [], warnings: [] and bypassed: false,
+    which on a 40-node verify was most of the answer. Absent means none.
+    """
+    report: dict[str, Any] = {"path": node.path(), "type": node.type().name()}
+    # A dangling channel reference cooks clean in Houdini, so it is reported
+    # as an error here: otherwise a build reads healthy while it is broken.
+    # ponytail: scans every parm of every node; cache per verify if large networks get slow.
+    errors = [_condensed(e) for e in node.errors()] + [
+        e for p in node.parms() for e in broken_references(p)
+    ]
+    warnings = [_condensed(w) for w in node.warnings()] + _attrib_size_warnings(node)
+    if errors:
+        report["errors"] = errors
+    if warnings:
+        report["warnings"] = warnings
     with contextlib.suppress(Exception):
-        report["bypassed"] = node.isBypassed()
+        if node.isBypassed():
+            report["bypassed"] = True
     return report
 
 
@@ -1318,7 +1325,7 @@ def build_network(
     reports = [_node_report(node) for node in created.values()]
     for report in reports:
         report.update(parm_reports.get(report["path"], {}))
-    error_nodes = [r["path"] for r in reports if r["errors"]]
+    error_nodes = [r["path"] for r in reports if r.get("errors")]
     result = {
         "success": True,
         "valid": True,
@@ -1388,11 +1395,12 @@ def verify_network(parent_path: str, **_: Any) -> dict:
     reports = []
     for child in parent.children():
         report = _node_report(child)
-        report["display"] = child.isDisplayFlagSet() if hasattr(child, "isDisplayFlagSet") else None
+        if getattr(child, "isDisplayFlagSet", lambda: False)():
+            report["display"] = True
         reports.append(report)
 
-    error_nodes = [r["path"] for r in reports if r["errors"]]
-    licensing = license_error([e for r in reports for e in r["errors"]])
+    error_nodes = [r["path"] for r in reports if r.get("errors")]
+    licensing = license_error([e for r in reports for e in r.get("errors", ())])
     return {
         "parent_path": parent_path,
         "node_count": len(reports),
