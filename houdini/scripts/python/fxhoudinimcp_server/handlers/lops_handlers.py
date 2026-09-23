@@ -265,10 +265,12 @@ def _prim_to_dict(
     # An empty `children` on an instanceable prim is not an empty prim: its
     # contents live on the prototype, and only an instance-proxy walk sees
     # them. Say so, with a count, instead of letting [] read as "nothing".
+    # The count walks the whole prototype, so only the single-prim reply
+    # (the one that lists `children`) pays for it, not every list entry.
     with contextlib.suppress(Exception):
         if prim.IsInstanceable():
             info["is_instanceable"] = True
-            hidden = _hidden_descendants(prim)
+            hidden = _hidden_descendants(prim) if include_attrs else 0
             if hidden:
                 info["hidden_descendants"] = hidden
         if prim.IsInstanceProxy():

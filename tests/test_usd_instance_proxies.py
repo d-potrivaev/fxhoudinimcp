@@ -91,9 +91,20 @@ class TestAnEmptyChildrenListIsLegible:
     def test_an_instanceable_prim_says_what_it_hides(self, monkeypatch):
         _usd(monkeypatch)
         monkeypatch.setattr(lops, "_hidden_descendants", lambda prim: 5)
-        info = lops._prim_to_dict(_instanceable("/pi/Prototypes/obj_0", True))
+        fake = _instanceable("/pi/Prototypes/obj_0", True)
+        fake.GetAttributes.return_value = []
+        fake.GetChildren.return_value = ()
+        info = lops._prim_to_dict(fake, include_attrs=True)
         assert info["is_instanceable"] is True
         assert info["hidden_descendants"] == 5
+
+    def test_a_list_entry_does_not_walk_the_prototype(self, monkeypatch):
+        _usd(monkeypatch)
+        walked = []
+        monkeypatch.setattr(lops, "_hidden_descendants", lambda prim: walked.append(prim) or 5)
+        info = lops._prim_to_dict(_instanceable("/pi/Prototypes/obj_0", True))
+        assert info["is_instanceable"] is True
+        assert walked == []
 
     def test_a_plain_prim_carries_no_instancing_keys(self, monkeypatch):
         _usd(monkeypatch)
