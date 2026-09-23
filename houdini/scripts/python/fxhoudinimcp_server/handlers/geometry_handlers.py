@@ -133,7 +133,7 @@ def _cook_state(node: hou.Node) -> tuple[dict[str, Any], list[str]]:
             f"Node sits inside for-each loop {loop['begin']} → {loop['end']}: read this "
             f"way it cooks standalone, outside the loop (no iteration metadata, one slice "
             f"at best), so these numbers are not the loop's result. Read {loop['end']} for "
-            f"the merged output, or cook the network's display node first."
+            f"the merged output."
         )
     return state, warnings
 
