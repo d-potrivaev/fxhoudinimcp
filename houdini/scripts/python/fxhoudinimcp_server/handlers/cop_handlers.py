@@ -7,6 +7,7 @@ Copernicus compositing networks.
 from __future__ import annotations
 
 # Built-in
+import contextlib
 import logging
 
 # Third-party
@@ -275,20 +276,51 @@ def get_cop_layer(node_path: str, output_index: int = 0) -> dict:
         result["x_resolution"] = None
         result["y_resolution"] = None
 
-    # Try Copernicus-style layer() method
+    # Copernicus: the layer itself. This used to answer only "available: true",
+    # with no resolution and no values, so a COP chain could not be checked
+    # without a screenshot of a visualizer that is not the data.
     try:
         layer_data = node.layer(output_index)
-        if layer_data is not None:
-            result["copernicus_layer"] = {
-                "type": str(type(layer_data).__name__),
-                "available": True,
-            }
-        else:
-            result["copernicus_layer"] = {"available": False}
-    except (AttributeError, Exception):
-        result["copernicus_layer"] = {"available": False}
-
+    except Exception:
+        layer_data = None
+    result["copernicus_layer"] = (
+        _layer_summary(layer_data) if layer_data is not None else {"available": False}
+    )
+    if layer_data is not None and result.get("x_resolution") is None:
+        resolution = result["copernicus_layer"].get("resolution") or [None, None]
+        result["x_resolution"], result["y_resolution"] = resolution[:2]
     return result
+
+
+def _layer_summary(layer) -> dict:
+    """Resolution, channels and per-channel value range of a Copernicus layer.
+
+    computeMin/Max/Average run in Houdini, so no pixel crosses into Python.
+    """
+    summary: dict = {"available": True}
+    with contextlib.suppress(Exception):
+        summary["resolution"] = list(layer.bufferResolution())
+    with contextlib.suppress(Exception):
+        summary["storage"] = str(layer.storageType()).rsplit(".", 1)[-1]
+    with contextlib.suppress(Exception):
+        summary["is_constant"] = bool(layer.isConstant())
+    channels = 0
+    with contextlib.suppress(Exception):
+        channels = int(layer.channelCount())
+    summary["channels"] = channels
+    ranges = []
+    for channel in range(min(channels, 4)):
+        with contextlib.suppress(Exception):
+            ranges.append(
+                {
+                    "min": layer.computeMin(channel),
+                    "max": layer.computeMax(channel),
+                    "mean": layer.computeAverage(channel),
+                }
+            )
+    if ranges:
+        summary["channel_ranges"] = ranges
+    return summary
 
 
 ###### cops.create_cop_node

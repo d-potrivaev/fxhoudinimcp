@@ -751,9 +751,20 @@ def _stage_summary(node: hou.Node) -> dict[str, Any] | None:
 
 
 def _geometry_summary(node: hou.Node) -> dict[str, Any] | None:
-    """Compact cooked evidence: geometry for a SOP node, the stage for a LOP."""
+    """Compact cooked evidence: geometry for a SOP, the stage for a LOP, the
+    image layer for a Copernicus COP (whose geometry() is one quad)."""
     if hasattr(node, "stage") and not hasattr(node, "geometry"):
         return _stage_summary(node)
+    is_cop = False
+    with contextlib.suppress(Exception):
+        is_cop = node.type().category().name() == "Cop"
+    if is_cop:
+        with contextlib.suppress(Exception):
+            from fxhoudinimcp_server.handlers.cop_handlers import _layer_summary
+
+            layer = node.layer()
+            if layer is not None:
+                return {"layer": _layer_summary(layer)}
     if not hasattr(node, "geometry"):
         return None
     try:
@@ -1364,6 +1375,12 @@ def verify_network(parent_path: str, **_: Any) -> dict:
         raise ValueError(f"Network not found: {parent_path}")
 
     display = parent.displayNode() if hasattr(parent, "displayNode") else None
+    if display is None:
+        # A copnet has no displayNode(): the child with the flag is the answer.
+        display = next(
+            (c for c in parent.children() if getattr(c, "isDisplayFlagSet", lambda: False)()),
+            None,
+        )
     if display is not None:
         with contextlib.suppress(hou.OperationFailed):
             display.cook(force=False)
