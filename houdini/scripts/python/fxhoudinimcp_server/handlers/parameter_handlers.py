@@ -59,6 +59,24 @@ def suggest_parms(wanted: str, labels: dict[str, str], n: int = 3) -> list[str]:
     return list(dict.fromkeys(found))[: n + 1]
 
 
+def set_whole_expression(parm: hou.Parm, expression: str, language: Any = None) -> int:
+    """Make *expression* drive *parm* on every frame; returns keys replaced.
+
+    On an animated parm setExpression only rewrites the segment at the
+    current frame: a chop() export onto keys at 1/50/100 read the channel on
+    frame 1 and still 90 on frame 50 (measured on 22.0.368). The keys go
+    first, and the count is reported so the caller can say what was replaced.
+    """
+    replaced = len(parm.keyframes())
+    if replaced > 1:
+        parm.deleteAllKeyframes()
+    if language is None:
+        parm.setExpression(expression)
+    else:
+        parm.setExpression(expression, language)
+    return replaced if replaced > 1 else 0
+
+
 def parm_labels(node: hou.Node) -> dict[str, str]:
     """Name -> label for every parm on a live node, multiparm instances included."""
     return {p.name(): p.description() for p in node.parms()}
@@ -532,7 +550,8 @@ def _set_parameters(
                 continue
             language = str(value.get("language", "hscript")).lower()
             try:
-                parm.setExpression(
+                replaced = set_whole_expression(
+                    parm,
                     str(value["expr"]),
                     hou.exprLanguage.Python if language == "python" else hou.exprLanguage.Hscript,
                 )
@@ -540,6 +559,8 @@ def _set_parameters(
                 errors.append({"parm_name": name, "error": str(exc)})
                 continue
             entry = {"parm_name": name, "expression": str(value["expr"])}
+            if replaced:
+                entry["replaced_keyframes"] = replaced
             if broken := broken_references(parm):
                 entry["warning"] = "; ".join(broken)
             results.append(entry)
@@ -689,7 +710,7 @@ def _set_expression(
 
     lang = hou.exprLanguage.Python if language.lower() == "python" else hou.exprLanguage.Hscript
 
-    parm.setExpression(expression, lang)
+    replaced = set_whole_expression(parm, expression, lang)
 
     result = {
         "node_path": node_path,
@@ -697,6 +718,8 @@ def _set_expression(
         "expression": expression,
         "language": language,
     }
+    if replaced:
+        result["replaced_keyframes"] = replaced
     problems = broken_references(parm)
     if lang == hou.exprLanguage.Hscript:
         # An unknown function or a bracing error evaluates to 0 without
@@ -860,7 +883,7 @@ def _link_parameters(
     function = _channel_function(dst)
     channel_path = _relative_channel_path(dst, src)
     ref_expr = f'{function}("{channel_path}")'
-    dst.setExpression(ref_expr, hou.exprLanguage.Hscript)
+    set_whole_expression(dst, ref_expr, hou.exprLanguage.Hscript)
 
     reply: dict[str, Any] = {
         "source": src.path(),

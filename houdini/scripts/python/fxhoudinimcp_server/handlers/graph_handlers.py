@@ -791,6 +791,9 @@ def _stage_summary(node: hou.Node) -> dict[str, Any] | None:
     return summary
 
 
+_VOLUME_SUMMARY_KEYS = ("name", "resolution", "min_value", "max_value")
+
+
 def _geometry_summary(node: hou.Node) -> dict[str, Any] | None:
     """Compact cooked evidence: geometry for a SOP, the stage for a LOP, the
     image layer for a Copernicus COP (whose geometry() is one quad)."""
@@ -806,6 +809,18 @@ def _geometry_summary(node: hou.Node) -> dict[str, Any] | None:
             layer = node.layer()
             if layer is not None:
                 return {"layer": _layer_summary(layer)}
+    if hasattr(node, "tracks") and not hasattr(node, "geometry"):
+        # A CHOP's evidence is its channels: that they exist, under the names
+        # an export will look for, and that they move.
+        with contextlib.suppress(Exception):
+            from fxhoudinimcp_server.handlers.chop_handlers import _track_entry
+
+            tracks = node.tracks()
+            summary = {"channels": [_track_entry(track) for track in tracks[:12]]}
+            if len(tracks) > 12:
+                summary["channels_total"] = len(tracks)
+            return summary
+        return None
     if not hasattr(node, "geometry"):
         return None
     try:
@@ -822,6 +837,21 @@ def _geometry_summary(node: hou.Node) -> dict[str, Any] | None:
         "bbox_max": list(bbox.maxvec()),
         "point_attribs": [a.name() for a in geo.pointAttribs()][:30],
     }
+    # A heightfield or a pyro source is volumes: "7 points, attrib P" said
+    # nothing about which layers exist or whether they hold anything.
+    with contextlib.suppress(Exception):
+        from fxhoudinimcp_server.handlers.geometry_handlers import _volume_entry
+
+        volumes = list(geo.primsOfType(hou.primType.Volume)) + list(
+            geo.primsOfType(hou.primType.VDB)
+        )
+        if volumes:
+            summary["volumes"] = [
+                {k: v for k, v in _volume_entry(prim).items() if k in _VOLUME_SUMMARY_KEYS}
+                for prim in volumes[:12]
+            ]
+            if len(volumes) > 12:
+                summary["volumes_total"] = len(volumes)
     warning = update_mode_warning()
     if warning:
         summary["warning"] = warning

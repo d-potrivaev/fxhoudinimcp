@@ -316,7 +316,9 @@ def create_vex_expression(
         ) from e
     finally:
         hou.setPwd(previous)
-    parm.setExpression(vex_code, language=hou.exprLanguage.Hscript)
+    from fxhoudinimcp_server.handlers.parameter_handlers import set_whole_expression
+
+    replaced = set_whole_expression(parm, vex_code, hou.exprLanguage.Hscript)
     value = parm.eval()
 
     return {
@@ -326,6 +328,7 @@ def create_vex_expression(
         "expression": vex_code,
         "language": "hscript",
         "value": value if isinstance(value, (int, float, str)) else str(value),
+        **({"replaced_keyframes": replaced} if replaced else {}),
     }
 
 

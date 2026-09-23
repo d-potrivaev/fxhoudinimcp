@@ -216,3 +216,17 @@ class TestCreateHdaKeepsTheInterface:
         node.spareParms.return_value = []
         assert hda._promote_spares_to_definition(node) == []
         node.removeSpareParms.assert_not_called()
+
+
+def test_expression_on_animated_parm_replaces_every_key():
+    """setExpression alone rewrote only the segment at the current frame."""
+    parm = MagicMock()
+    parm.keyframes.return_value = [MagicMock(), MagicMock(), MagicMock()]
+    assert parameters.set_whole_expression(parm, "$F") == 3
+    parm.deleteAllKeyframes.assert_called_once()
+    parm.setExpression.assert_called_once_with("$F")
+
+    held = MagicMock()
+    held.keyframes.return_value = [MagicMock()]  # an expression is one key
+    assert parameters.set_whole_expression(held, "$F") == 0
+    held.deleteAllKeyframes.assert_not_called()
