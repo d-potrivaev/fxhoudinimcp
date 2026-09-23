@@ -111,6 +111,11 @@ class TestPrimIntrinsicsInOneCall:
                 node_path="/obj/geo1/pack1", prim_indices=[0], prim_range=[0, 1]
             )
 
+    @pytest.mark.parametrize("bad", [[0, 10**9], [3, 1], [-1, 2]])
+    def test_a_bad_range_is_refused_without_building_it(self, five_prims, bad):
+        with pytest.raises(RuntimeError, match="out of range"):
+            geometry._get_prim_intrinsics(node_path="/obj/geo1/pack1", prim_range=bad)
+
     def test_a_malformed_range_is_refused(self, five_prims):
         with pytest.raises(RuntimeError, match=r"\[start, end\]"):
             geometry._get_prim_intrinsics(node_path="/obj/geo1/pack1", prim_range=[0])

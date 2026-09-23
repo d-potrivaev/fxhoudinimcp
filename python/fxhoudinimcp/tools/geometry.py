@@ -289,7 +289,8 @@ async def get_prim_intrinsics(
     table plus `stats` (min/max/avg and the prim index each extreme belongs
     to, per component for a vector such as `bounds`); `prim_indices` or
     `prim_range` narrow it to the prims you care about. Up to 2000 rows per
-    call; beyond that the reply says `truncated` and `requested_count`.
+    call; beyond that the reply says `truncated` and `requested_count`, and
+    `stats` cover only the rows returned: page with `prim_range`.
 
     Args:
         node_path: Node path.

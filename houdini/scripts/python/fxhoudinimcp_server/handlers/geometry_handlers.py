@@ -771,6 +771,13 @@ def _get_prim_intrinsics(
             if len(prim_range) != 2:
                 raise hou.OperationFailed("prim_range must be [start, end] (end inclusive).")
             start, end = int(prim_range[0]), int(prim_range[1])
+            # Refuse before building the list: [0, 10**9] would allocate
+            # a billion ints on Houdini's main thread just to reject them.
+            if start < 0 or end >= total_prims or start > end:
+                raise hou.OperationFailed(
+                    f"prim_range {[start, end]} out of range "
+                    f"(0..{total_prims - 1}, start <= end) on {node_path}"
+                )
             indices = list(range(start, end + 1))
         else:
             indices = [int(i) for i in prim_indices]
