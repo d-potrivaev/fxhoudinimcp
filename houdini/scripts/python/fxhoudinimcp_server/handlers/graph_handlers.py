@@ -1585,6 +1585,10 @@ def get_node_card(
                                 for child in folder.parmTemplates()
                                 if "#" in child.name()
                             ][:_PARM_CAP],
+                            # Where "#" starts counting: Rig Pose's first
+                            # instance is group0, most nodes' is name1, and
+                            # guessing wrong cost a failed set_parameters.
+                            "first_index": int(folder.tags().get("multistartoffset", "1")),
                         }
                     )
             with contextlib.suppress(Exception):
