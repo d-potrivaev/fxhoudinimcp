@@ -168,7 +168,26 @@ async def start_render(
     params: dict[str, Any] = {"node_path": node_path, "background": background}
     if frame_range is not None:
         params["frame_range"] = frame_range
-    return await bridge.execute("rendering.start_render", params, timeout=NO_TIMEOUT)
+    result = await bridge.execute("rendering.start_render", params, timeout=NO_TIMEOUT)
+    if isinstance(result, dict) and result.get("success") is False and not result.get("errors"):
+        # A usdrender_rop gets husk's exit error (a missing license, a bad
+        # scene) only once Houdini's main thread is back in its event loop,
+        # which it is not while start_render runs. One more call reads it, so
+        # "reported no errors" is not said about a render that failed on one.
+        progress = await bridge.execute("rendering.get_render_progress", {"node_path": node_path})
+        if isinstance(progress, dict) and progress.get("errors"):
+            result["errors"] = progress["errors"]
+            result["license_error"] = progress.get("license_error")
+            result["message"] = (
+                "Render failed: "
+                + (
+                    "no license for the renderer"
+                    if progress.get("license_error")
+                    else "the ROP reported errors"
+                )
+                + "; nothing was written."
+            )
+    return result
 
 
 @mcp.tool()

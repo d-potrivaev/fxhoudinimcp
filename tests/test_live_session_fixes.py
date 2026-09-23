@@ -146,3 +146,35 @@ class TestSolverMessages:
         row = graph._frame_stats(entry)
         assert row["per_axis"][1] == [-0.1, 2.8]
         assert "count" not in row
+
+
+class TestWorkflowGuides:
+    def test_every_guide_is_served_by_the_tool(self):
+        """solaris, tops, assets, model and troubleshooting raised KeyError."""
+        from fxhoudinimcp.prompts.workflows import _MD_DIR, workflow_guide_text
+
+        for path in sorted((_MD_DIR / "workflows").glob("*.md")):
+            assert "Render the crate" in workflow_guide_text(path.stem, "Render the crate"), (
+                path.stem
+            )
+
+
+class TestStartRenderErrors:
+    async def test_a_silent_failure_reads_the_errors_husk_posts_later(self, mock_ctx, mock_bridge):
+        from fxhoudinimcp.tools.rendering import start_render
+
+        license = "Command Exit Code: 3\nNo licenses could be found to run this application."
+        mock_bridge.execute.side_effect = [
+            {"success": False, "wrote_files": False, "message": "Render reported no errors, ..."},
+            {"errors": [license], "license_error": license},
+        ]
+        result = await start_render(mock_ctx, "/stage/render", frame_range=[1, 1])
+        assert result["errors"] == [license]
+        assert "no license" in result["message"]
+
+    async def test_a_successful_render_costs_one_call(self, mock_ctx, mock_bridge):
+        from fxhoudinimcp.tools.rendering import start_render
+
+        mock_bridge.execute.return_value = {"success": True, "wrote_files": True}
+        await start_render(mock_ctx, "/stage/render")
+        assert mock_bridge.execute.call_count == 1

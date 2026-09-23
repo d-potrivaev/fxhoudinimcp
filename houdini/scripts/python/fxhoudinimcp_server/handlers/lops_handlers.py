@@ -1076,8 +1076,17 @@ def _get_usd_bound_material(
                     # Bound, to a material prim that is not on the stage.
                     row["missing_material"] = _binding_targets(rel)
             with contextlib.suppress(Exception):
-                direct = UsdShade.MaterialBindingAPI(prim).GetDirectBinding(token)
-                row["direct_binding"] = str(direct.GetMaterialPath()) or None
+                # Purpose-specific first, then all-purpose, the renderer's own
+                # fallback. assignmaterial authors the all-purpose relationship,
+                # so asking only for "full" answered null for a prim whose
+                # source said kind: direct.
+                api = UsdShade.MaterialBindingAPI(prim)
+                row["direct_binding"] = None
+                for which in dict.fromkeys((token, UsdShade.Tokens.allPurpose)):
+                    path = str(api.GetDirectBinding(which).GetMaterialPath())
+                    if path:
+                        row["direct_binding"] = path
+                        break
 
     return {
         "node_path": node_path,

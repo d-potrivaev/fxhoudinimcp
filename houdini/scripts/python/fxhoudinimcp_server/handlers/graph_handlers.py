@@ -660,8 +660,56 @@ def _node_report(node: hou.Node) -> dict[str, Any]:
     return report
 
 
+# Stages bigger than this are summarised from the first prims only.
+_STAGE_PRIM_CAP = 20000
+
+
+def _stage_summary(node: hou.Node) -> dict[str, Any] | None:
+    """Compact stage evidence for a LOP node: what a render of it would contain.
+
+    A Solaris build used to answer geometry: null, so "is there a camera, are
+    the lights in, does every mesh have a material" took three more calls.
+    """
+    try:
+        from pxr import UsdGeom, UsdShade
+
+        stage = node.stage()
+    except Exception:
+        return None
+    if stage is None:
+        return None
+    counts: dict[str, int] = {}
+    meshes = []
+    for index, prim in enumerate(stage.Traverse()):
+        if index >= _STAGE_PRIM_CAP:
+            counts["(truncated)"] = 1
+            break
+        type_name = str(prim.GetTypeName()) or "(untyped)"
+        counts[type_name] = counts.get(type_name, 0) + 1
+        if prim.IsA(UsdGeom.Mesh):
+            meshes.append(prim)
+    summary: dict[str, Any] = {"prims_by_type": counts}
+    lights = sum(n for t, n in counts.items() if "Light" in t)
+    summary["cameras"] = counts.get("Camera", 0)
+    summary["lights"] = lights
+    if meshes:
+        with contextlib.suppress(Exception):
+            materials, _ = UsdShade.MaterialBindingAPI.ComputeBoundMaterials(
+                meshes, UsdShade.Tokens.full
+            )
+            unbound = [
+                str(m.GetPath()) for m, mat in zip(meshes, materials, strict=False) if not mat
+            ]
+            summary["meshes_without_material"] = len(unbound)
+            if unbound:
+                summary["unbound_examples"] = unbound[:5]
+    return summary
+
+
 def _geometry_summary(node: hou.Node) -> dict[str, Any] | None:
-    """Compact cooked-geometry evidence for a SOP node."""
+    """Compact cooked evidence: geometry for a SOP node, the stage for a LOP."""
+    if hasattr(node, "stage") and not hasattr(node, "geometry"):
+        return _stage_summary(node)
     if not hasattr(node, "geometry"):
         return None
     try:

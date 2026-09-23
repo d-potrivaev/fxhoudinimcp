@@ -942,7 +942,9 @@ def set_viewer_context(
     scene_viewer.setPwd(network)
 
     if current_node is not None:
-        node = hou.node(current_node)
+        # "karma" means the node of that name inside the network; hou.node()
+        # alone reads it as relative to /, and the documented usage failed.
+        node = network.node(current_node) or hou.node(current_node)
         if node is None:
             raise ValueError(f"Node not found: {current_node}")
         scene_viewer.setCurrentNode(node)
