@@ -160,12 +160,18 @@ class TestWorkflowGuides:
 
 
 class TestStartRenderErrors:
-    async def test_a_silent_failure_reads_the_errors_husk_posts_later(self, mock_ctx, mock_bridge):
+    async def test_a_silent_failure_reads_the_errors_husk_posts_later(
+        self, mock_ctx, mock_bridge, monkeypatch
+    ):
+        import fxhoudinimcp.tools.rendering as rendering
         from fxhoudinimcp.tools.rendering import start_render
+
+        monkeypatch.setattr(rendering, "_ERROR_POLL_SECONDS", 0)
 
         license = "Command Exit Code: 3\nNo licenses could be found to run this application."
         mock_bridge.execute.side_effect = [
             {"success": False, "wrote_files": False, "message": "Render reported no errors, ..."},
+            {"errors": []},  # husk's error has not landed on the first look
             {"errors": [license], "license_error": license},
         ]
         result = await start_render(mock_ctx, "/stage/render", frame_range=[1, 1])

@@ -132,6 +132,11 @@ async def create_render_node(
     return await bridge.execute("rendering.create_render_node", params)
 
 
+# How long a render that wrote nothing is watched for the error husk posts late.
+_ERROR_POLLS = 10
+_ERROR_POLL_SECONDS = 0.5
+
+
 @mcp.tool()
 async def start_render(
     ctx: Context,
@@ -171,10 +176,18 @@ async def start_render(
     result = await bridge.execute("rendering.start_render", params, timeout=NO_TIMEOUT)
     if isinstance(result, dict) and result.get("success") is False and not result.get("errors"):
         # A usdrender_rop gets husk's exit error (a missing license, a bad
-        # scene) only once Houdini's main thread is back in its event loop,
-        # which it is not while start_render runs. One more call reads it, so
-        # "reported no errors" is not said about a render that failed on one.
-        progress = await bridge.execute("rendering.get_render_progress", {"node_path": node_path})
+        # scene) some time after render() returns: measured on 22.0.368, an
+        # immediate follow-up still saw none. Poll briefly without blocking
+        # Houdini, so "reported no errors" is not said about a render that
+        # failed on one.
+        progress: Any = None
+        for _ in range(_ERROR_POLLS):
+            await asyncio.sleep(_ERROR_POLL_SECONDS)
+            progress = await bridge.execute(
+                "rendering.get_render_progress", {"node_path": node_path}
+            )
+            if isinstance(progress, dict) and progress.get("errors"):
+                break
         if isinstance(progress, dict) and progress.get("errors"):
             result["errors"] = progress["errors"]
             result["license_error"] = progress.get("license_error")

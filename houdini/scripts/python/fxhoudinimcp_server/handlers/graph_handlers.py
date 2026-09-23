@@ -668,7 +668,7 @@ def _stage_summary(node: hou.Node) -> dict[str, Any] | None:
     """Compact stage evidence for a LOP node: what a render of it would contain.
 
     A Solaris build used to answer geometry: null, so "is there a camera, are
-    the lights in, does every mesh have a material" took three more calls.
+    the lights in, does every gprim have a material" took three more calls.
     """
     try:
         from pxr import UsdGeom, UsdShade
@@ -686,7 +686,9 @@ def _stage_summary(node: hou.Node) -> dict[str, Any] | None:
             break
         type_name = str(prim.GetTypeName()) or "(untyped)"
         counts[type_name] = counts.get(type_name, 0) + 1
-        if prim.IsA(UsdGeom.Mesh):
+        # Gprim, not Mesh: a Sphere or Cube LOP renders grey without a
+        # material just the same.
+        if prim.IsA(UsdGeom.Gprim):
             meshes.append(prim)
     summary: dict[str, Any] = {"prims_by_type": counts}
     lights = sum(n for t, n in counts.items() if "Light" in t)
@@ -700,7 +702,7 @@ def _stage_summary(node: hou.Node) -> dict[str, Any] | None:
             unbound = [
                 str(m.GetPath()) for m, mat in zip(meshes, materials, strict=False) if not mat
             ]
-            summary["meshes_without_material"] = len(unbound)
+            summary["gprims_without_material"] = len(unbound)
             if unbound:
                 summary["unbound_examples"] = unbound[:5]
     return summary
