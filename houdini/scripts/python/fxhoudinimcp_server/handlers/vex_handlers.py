@@ -33,7 +33,7 @@ def _get_node(node_path: str) -> hou.Node:
 def _validate_vex_quick(node: hou.Node) -> dict:
     """Cook a wrangle node and return any VEX errors/warnings."""
     with contextlib.suppress(hou.OperationFailed):
-        node.cook(force=True)
+        node.cook(force=False)  # the new code already dirtied it; force only redid the work
 
     errors = []
     warnings = []
@@ -329,7 +329,7 @@ def validate_vex(node_path: str) -> dict:
     # Force cook the node to trigger VEX compilation. A failure here is the
     # expected path for broken VEX; the errors are read off the node below.
     with contextlib.suppress(hou.OperationFailed):
-        node.cook(force=True)
+        node.cook(force=False)  # the new code already dirtied it; force only redid the work
 
     # Gather errors and warnings
     errors = []

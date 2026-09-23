@@ -154,7 +154,9 @@ def _list_caches(*, root_path: str = "/", **_: Any) -> dict[str, Any]:
         root_path: Root path to search from (default: "/").
     """
     root = _get_node(root_path)
-    all_nodes = root.allSubChildren()
+    # Not inside locked assets: a File Cache's own render ROP and file SOP
+    # matched too, listing one cache two or three times with a disk scan each.
+    all_nodes = root.allSubChildren(recurse_in_locked_nodes=False)
 
     caches: list[dict[str, Any]] = []
     for node in all_nodes:

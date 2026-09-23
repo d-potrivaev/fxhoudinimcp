@@ -174,23 +174,16 @@ def _list_materials(*, root_path: str = "/mat", **_: Any) -> dict[str, Any]:
         if root is None:
             continue
 
-        for node in root.allSubChildren():
-            type_name = node.type().name()
+        for node in root.allSubChildren(recurse_in_locked_nodes=False):
+            # A material is a VOP whose parent is not itself a VOP: it sits in
+            # /mat, a matnet or a Material Library, not inside a builder. The
+            # old test (any Vop, or "material"/"shader" in the type name)
+            # listed every shader node inside every builder as a material, and
+            # assignmaterial / materiallibrary LOPs as materials too.
             category = node.type().category().name()
-
-            # Match material-like node types
-            if (
-                category == "Vop"
-                or "material" in type_name.lower()
-                or "shader" in type_name.lower()
-                or type_name
-                in (
-                    "principledshader::2.0",
-                    "principledshader",
-                    "mtlxstandard_surface",
-                    "materialbuilder",
-                )
-            ):
+            parent = node.parent()
+            parent_category = parent.type().category().name() if parent else ""
+            if category == "Shop" or (category == "Vop" and parent_category != "Vop"):
                 materials.append(_material_summary(node))
 
     return {
