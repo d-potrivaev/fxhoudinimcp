@@ -478,6 +478,9 @@ _NUMERIC_TEMPLATES = frozenset({"Int", "Float", "Toggle"})
 _EXPRESSION_LANGUAGES = {"hscript": "Hscript", "python": "Python"}
 
 
+_FLAG_KEYS = frozenset({"display", "render", "bypass", "template"})
+
+
 def _unknown_key_error(label: str, kind: str, key: str, known: frozenset) -> str:
     """A did-you-mean refusal for a spec or input key build_network does not know."""
     close = get_close_matches(str(key), sorted(known), n=3, cutoff=0.4)
@@ -963,6 +966,10 @@ def build_network(
         for key in spec:
             if key not in _SPEC_KEYS:
                 errors.append(_unknown_key_error(label, "spec", key, _SPEC_KEYS))
+        # {"lock": true} or {"Display": true} used to vanish without a word.
+        for key in spec.get("flags") or {}:
+            if key not in _FLAG_KEYS:
+                errors.append(_unknown_key_error(label, "flag", key, _FLAG_KEYS))
         for entry in spec.get("inputs") or []:
             if isinstance(entry, dict):
                 for key in entry:
@@ -1222,6 +1229,7 @@ def build_network(
     created: dict[str, hou.Node] = {}
     # Per node path: what the literals in `parms` did to expressions.
     parm_reports: dict[str, dict[str, dict[str, str]]] = {}
+    flags_not_applied: dict[str, list[str]] = {}
     try:
         for spec in nodes:
             node = parent.createNode(resolved_types[spec["type"]].name(), spec.get("name"))
@@ -1284,8 +1292,14 @@ def build_network(
                 ("bypass", "bypass"),
                 ("template", "setTemplateFlag"),
             ):
-                if flag in flags and hasattr(node, setter):
+                if flag not in flags:
+                    continue
+                if hasattr(node, setter):
                     getattr(node, setter)(bool(flags[flag]))
+                else:
+                    # A ROP or VOP has no display/template flag: say so
+                    # rather than skip it as if it had been set.
+                    flags_not_applied.setdefault(node.path(), []).append(flag)
             if spec.get("color"):
                 node.setColor(hou.Color(tuple(spec["color"])))
             if spec.get("comment"):
@@ -1335,6 +1349,8 @@ def build_network(
         "error_nodes": error_nodes,
         "node_count": len(reports),
     }
+    if flags_not_applied:
+        result["flags_not_applied"] = flags_not_applied
     # A literal that did not take is part of the spec this call did not
     # build, so it is said at the top level, not only inside a node report:
     # a bare set() used to leave a Ray SOP's @N.x in place and answer success.

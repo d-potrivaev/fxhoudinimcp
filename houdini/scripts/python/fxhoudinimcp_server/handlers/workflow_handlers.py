@@ -30,12 +30,12 @@ def _get_node(node_path: str) -> hou.Node:
     return node
 
 
-def _focus_network_editor(node: hou.Node) -> None:
+def _focus_network_editor(node: hou.Node, place_unpositioned: bool = True) -> None:
     """Best-effort: lay out, pan the editor to *node*, hide the other objects."""
     try:
         parent = node.parent()
         if parent is not None:
-            layout_if_enabled(parent)
+            layout_if_enabled(parent, place_unpositioned=place_unpositioned)
         for pane_tab in hou.ui.paneTabs():
             if pane_tab.type() == hou.paneTabType.NetworkEditor:
                 if parent is not None:
@@ -88,6 +88,20 @@ def _set_parm_safe(node: hou.Node, parm_name: str, value: Any) -> bool:
             )
             return False
     return False
+
+
+def _set_values(node: hou.Node, values: dict) -> list[str]:
+    """Set parms or whole parm tuples; return the names that did not take."""
+    missed = []
+    for name, value in values.items():
+        try:
+            if isinstance(value, (list, tuple)):
+                node.parmTuple(name).set(value)
+            else:
+                node.parm(name).set(value)
+        except Exception:
+            missed.append(name)
+    return missed
 
 
 def _create_first_available(
@@ -913,70 +927,42 @@ def _create_material(
         opacity: Opacity (0.0 = transparent, 1.0 = opaque).
     """
     mat = _ensure_mat_context()
+    color = list(base_color[:3]) if base_color is not None and len(base_color) >= 3 else None
 
     if mat_type == "principled":
-        # -- Principled Shader
-        print(f"[workflow] Creating principled shader '{name}' in /mat")
-        try:
-            shader = mat.createNode("principledshader", name)
-        except hou.OperationFailed:
-            shader = mat.createNode("principledshader::2.0", name)
-
-        if base_color is not None and len(base_color) >= 3:
-            print(f"[workflow] Setting base color to {base_color}")
-            _set_parm_safe(shader, "basecolorr", base_color[0])
-            _set_parm_safe(shader, "basecolorg", base_color[1])
-            _set_parm_safe(shader, "basecolorb", base_color[2])
-
-        print(f"[workflow] Setting roughness={roughness}, metallic={metallic}, opacity={opacity}")
-        _set_parm_safe(shader, "rough", roughness)
-        _set_parm_safe(shader, "metallic", metallic)
-        _set_parm_safe(shader, "opac", opacity)
-
-        shader_path = shader.path()
-
+        shader = _create_first_available(mat, ("principledshader::2.0", "principledshader"), name)
+        values = {"rough": roughness, "metallic": metallic, "opac": opacity}
+        if color:
+            values["basecolor"] = color
     elif mat_type == "materialx":
-        # -- MaterialX Standard Surface
-        print(f"[workflow] Creating MaterialX standard surface '{name}' in /mat")
-        try:
-            shader = mat.createNode("mtlxstandard_surface", name)
-        except hou.OperationFailed:
-            try:
-                shader = mat.createNode("mtlxsurface", name)
-            except hou.OperationFailed:
-                # Fallback: create a subnet with materialx nodes
-                shader = mat.createNode("subnet", name)
-                print(
-                    "[workflow] Warning: MaterialX node types not directly available, created subnet"
-                )
-
-        if base_color is not None and len(base_color) >= 3:
-            print(f"[workflow] Setting base color to {base_color}")
-            _set_parm_safe(shader, "base_colorr", base_color[0])
-            _set_parm_safe(shader, "base_colorg", base_color[1])
-            _set_parm_safe(shader, "base_colorb", base_color[2])
-
-        print(f"[workflow] Setting roughness={roughness}, metallic={metallic}, opacity={opacity}")
-        _set_parm_safe(shader, "specular_roughness", roughness)
-        _set_parm_safe(shader, "metalness", metallic)
-        _set_parm_safe(shader, "opacity", opacity)
-
-        shader_path = shader.path()
-
+        # The bare-subnet fallback this used to take returned an empty network
+        # as type "materialx" with success; a missing MaterialX is an error.
+        shader = _create_first_available(mat, ("mtlxstandard_surface", "mtlxsurface"), name)
+        # opacity is a colour on MaterialX (opacityr/g/b): a scalar "opacity"
+        # parm does not exist, and 0.5 used to be dropped without a word.
+        values = {"specular_roughness": roughness, "metalness": metallic, "opacity": [opacity] * 3}
+        if color:
+            values["base_color"] = color
     else:
         raise ValueError(f"Unknown mat_type '{mat_type}'. Must be 'principled' or 'materialx'.")
+    skipped = _set_values(shader, values)
+    shader_path = shader.path()
 
-    layout_if_enabled(mat)
-    _focus_network_editor(shader)
+    layout_if_enabled(mat, place_unpositioned=True)
+    # The shader was just created (through _create_first_available): place it.
+    _focus_network_editor(shader, place_unpositioned=True)
 
     print(f"[workflow] Material '{name}' created at {shader_path}")
 
-    return {
-        "success": True,
+    result = {
+        "success": not skipped,
         "material_path": shader_path,
         "shader_node_path": shader_path,
         "type": mat_type,
     }
+    if skipped:
+        result["not_set"] = skipped
+    return result
 
 
 ###### workflow.assign_material
@@ -999,6 +985,10 @@ def _assign_material(
     print(f"[workflow] Assigning material '{material_path}' to '{geo_path}'")
 
     geo = _get_node(geo_path)
+    # A typo in material_path used to be written into the Material SOP and
+    # answered with success; the object then rendered unshaded.
+    if hou.node(material_path) is None:
+        raise ValueError(f"Material not found: {material_path}")
 
     # Determine the SOP-level parent -- if geo_path points to an Object-level
     # node we work inside it; if it already points to a SOP network, use it.
@@ -1010,10 +1000,10 @@ def _assign_material(
     else:
         sop_parent = geo
 
-    # Find the last displayed SOP
-    print("[workflow] Finding last displayed SOP")
-    last_displayed = None
-    for child in sop_parent.children():
+    # A SOP named explicitly is where the material goes; only an object gets
+    # the Material SOP after its displayed node.
+    last_displayed = geo if category == "Sop" else None
+    for child in () if last_displayed is not None else sop_parent.children():
         try:
             if child.isDisplayFlagSet():
                 last_displayed = child
@@ -1080,76 +1070,36 @@ def _build_sop_chain(
     """
     if steps is None or len(steps) == 0:
         raise ValueError("steps list is required and must not be empty")
+    _get_node(parent_path)
+    from fxhoudinimcp_server.handlers.graph_handlers import build_network
 
-    parent = _get_node(parent_path)
-    created_nodes: list[dict] = []
-    prev_node = None
-
-    for i, step in enumerate(steps):
-        node_type = step.get("type")
-        if node_type is None:
-            raise ValueError(f"Step {i} is missing required 'type' key")
-
-        node_name = step.get("name")
-        params = step.get("params", {})
-
-        print(
-            f"[workflow] Step {i + 1}/{len(steps)}: Creating '{node_type}'"
-            + (f" (name='{node_name}')" if node_name else "")
-        )
-
-        try:
-            node = parent.createNode(node_type, node_name=node_name)
-        except hou.OperationFailed as e:
-            raise ValueError(
-                f"Failed to create node of type '{node_type}' at step {i + 1}: {readable_message(e)}"
-            ) from e
-
-        # Wire to previous node
-        if prev_node is not None:
-            try:
-                node.setInput(0, prev_node, 0)
-            except Exception as e:
-                print(
-                    f"[workflow] Warning: could not wire step {i + 1} to previous node: {readable_message(e)}"
-                )
-
-        # Set parameters
-        if params:
-            print(f"[workflow] Setting {len(params)} parameter(s) on {node.path()}")
-            for parm_name, parm_value in params.items():
-                _set_parm_safe(node, parm_name, parm_value)
-
-        created_nodes.append(
-            {
-                "path": node.path(),
-                "type": node.type().name(),
-                "name": node.name(),
-            }
-        )
-        prev_node = node
-
-    # Set display flag on last node
-    if prev_node is not None:
-        try:
-            prev_node.setDisplayFlag(True)
-            prev_node.setRenderFlag(True)
-            print(f"[workflow] Display flag set on {prev_node.path()}")
-        except Exception:
-            pass
-
-    # Layout
-    print("[workflow] Laying out nodes")
-    layout_if_enabled(parent)
-    if prev_node is not None:
-        _focus_network_editor(prev_node)
-
-    print(f"[workflow] SOP chain built: {len(created_nodes)} node(s)")
-
+    # A linear build_network: every type and parameter is validated before
+    # anything is created, tuples ("rad", "t", "size") are set whole, and a
+    # failure builds nothing. The hand-rolled loop this replaces skipped a
+    # misspelt or tuple-only parameter and a failed wire with success: True.
+    specs = []
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict) or not step.get("type"):
+            raise ValueError(f"Step {index} is missing required 'type' key")
+        name = step.get("name") or f"{step['type'].split('::')[0].split(':')[-1]}_step{index + 1}"
+        spec = {"type": step["type"], "name": name, "parms": step.get("params") or {}}
+        if specs:
+            spec["inputs"] = [specs[-1]["name"]]
+        specs.append(spec)
+    specs[-1]["flags"] = {"display": True, "render": True}
+    result = build_network(parent_path=parent_path, nodes=specs)
+    if not result.get("success"):
+        return result
+    last = result["created"][-1]["path"] if result.get("created") else None
+    if last:
+        # build_network placed what it created; nothing else may move.
+        _focus_network_editor(hou.node(last), place_unpositioned=False)
     return {
         "success": True,
-        "nodes": created_nodes,
-        "displayed": prev_node.path() if prev_node else None,
+        "nodes": result["created"],
+        "displayed": last,
+        "geometry": result.get("geometry"),
+        "error_nodes": result.get("error_nodes", []),
     }
 
 
@@ -1184,6 +1134,9 @@ def _setup_render(
     obj = _ensure_obj_context()
     out = _ensure_out_context()
     all_nodes: list[str] = []
+    # What did not take goes here and into the reply; it used to be printed
+    # to Houdini's console, where the caller never saw it.
+    warnings: list[str] = []
 
     # -- Step 1: Camera
     if camera is None:
@@ -1202,9 +1155,7 @@ def _setup_render(
     else:
         print(f"[workflow] Using existing camera: {camera}")
         if hou.node(camera) is None:
-            print(
-                f"[workflow] Warning: camera '{camera}' not found -- ROP will reference it anyway"
-            )
+            warnings.append(f"camera '{camera}' does not exist; the ROP references it anyway")
 
     # -- Step 2: ROP node
     if renderer == "karma":
@@ -1228,35 +1179,46 @@ def _setup_render(
 
     all_nodes.append(rop.path())
 
-    # -- Step 3: Configure output path
-    print(f"[workflow] Setting output path: {output_path}")
-    # Try common parameter names for different ROP types
-    output_set = False
+    # -- Step 3: Output path
+    applied: dict[str, Any] = {}
     for parm_name in ("picture", "vm_picture", "outputimage", "ar_picture"):
         if _set_parm_safe(rop, parm_name, output_path):
-            output_set = True
+            applied["output"] = parm_name
             break
-    if not output_set:
-        print("[workflow] Warning: could not find output path parameter on ROP")
+    else:
+        warnings.append("no output image parameter found on the ROP; output_path not set")
 
-    # -- Step 4: Configure resolution
-    print(f"[workflow] Setting resolution: {resolution[0]}x{resolution[1]}")
-    # Resolution can be on the ROP or on the camera
-    _set_parm_safe(rop, "resx", resolution[0])
-    _set_parm_safe(rop, "resy", resolution[1])
-    _set_parm_safe(rop, "res_overridex", resolution[0])
-    _set_parm_safe(rop, "res_overridey", resolution[1])
+    # -- Step 4: Resolution. res_override* only counts with override_camerares
+    # on, and both Karma and Mantra ship it off: the render used the camera's
+    # resolution while the reply echoed the one asked for.
+    if _set_parm_safe(rop, "override_camerares", 1):
+        _set_parm_safe(rop, "res_overridex", resolution[0])
+        _set_parm_safe(rop, "res_overridey", resolution[1])
+        applied["resolution"] = "override_camerares + res_override"
+    elif _set_parm_safe(rop, "resolutionx", resolution[0]):
+        _set_parm_safe(rop, "resolutiony", resolution[1])
+        applied["resolution"] = "resolutionx/y"
+    else:
+        warnings.append("no resolution parameter found on the ROP; resolution not set")
 
-    # -- Step 5: Configure samples
-    print(f"[workflow] Setting samples: {samples}")
-    for parm_name in ("vm_samples", "samples", "samplesperpixel", "vm_samplesx", "karma_samples"):
-        _set_parm_safe(rop, parm_name, samples)
+    # -- Step 5: Samples. Mantra splits them per axis (64 = 8 x 8).
+    if _set_parm_safe(rop, "samplesperpixel", samples):
+        applied["samples"] = "samplesperpixel"
+    elif rop.parm("vm_samplesx") is not None:
+        side = max(1, round(samples**0.5))
+        _set_parm_safe(rop, "vm_samplesx", side)
+        _set_parm_safe(rop, "vm_samplesy", side)
+        applied["samples"] = f"vm_samplesx/y = {side}x{side}"
+    else:
+        warnings.append("no pixel samples parameter found on the ROP; samples not set")
 
-    # -- Step 6: Set camera path
-    print(f"[workflow] Setting camera: {camera}")
+    # -- Step 6: Camera path
     for parm_name in ("camera", "cam", "viewcamera"):
         if _set_parm_safe(rop, parm_name, camera):
+            applied["camera"] = parm_name
             break
+    else:
+        warnings.append("no camera parameter found on the ROP; camera not set")
 
     # Layout
     layout_if_enabled(out)
@@ -1272,7 +1234,9 @@ def _setup_render(
         "renderer": renderer,
         "resolution": resolution,
         "samples": samples,
+        "applied": applied,
         "all_nodes": all_nodes,
+        **({"warnings": warnings} if warnings else {}),
     }
 
 

@@ -80,12 +80,13 @@ def _resolve_parm(node_path: str, parm_name: str) -> hou.Parm:
     node = _resolve_node(node_path)
     parm = node.parm(parm_name)
     if parm is None:
-        available = _available_parm_names(node)
+        # No full name list: on a Pyro Solver it was 14.5 KB, sent on every
+        # guessed name, the most common mistake there is.
         close = suggest_parms(parm_name, parm_labels(node))
         hint = f" Did you mean: {close}?" if close else ""
         raise ValueError(
             f"Parameter '{parm_name}' not found on node '{node_path}'.{hint} "
-            f"Available parameters: {available}"
+            f"get_node_card(node_type, parm_filter=...) lists the real names."
         )
     return parm
 
@@ -686,9 +687,23 @@ def _set_expression(
         "expression": expression,
         "language": language,
     }
-    broken = broken_references(parm)
-    if broken:
-        result["warning"] = "; ".join(broken)
+    problems = broken_references(parm)
+    if lang == hou.exprLanguage.Hscript:
+        # An unknown function or a bracing error evaluates to 0 without
+        # raising, so the expression looks set and quietly reads zero.
+        previous = hou.pwd()
+        try:
+            hou.setPwd(parm.node())
+            hou.hscriptExpression(expression)
+        except hou.OperationFailed as exc:
+            detail = str(exc).replace("The attempted operation failed.", "").strip()
+            problems.append(f"{parm_name}: the expression does not evaluate ({detail})")
+        except Exception:
+            pass
+        finally:
+            hou.setPwd(previous)
+    if problems:
+        result["warning"] = "; ".join(problems)
     return result
 
 
