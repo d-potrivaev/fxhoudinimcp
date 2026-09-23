@@ -834,6 +834,70 @@ register_handler("lops.create_lop_node", _create_lop_node)
 ###### lops.set_usd_attribute
 
 
+def _edit_attributes_after(node: hou.Node, node_name: str, prim_path: str, values: dict) -> dict:
+    """Set USD attributes with a Python LOP spliced in after *node*.
+
+    The LOP used to hang off *node* with nothing reading it: the downstream
+    wiring and the display flag stayed on *node*, so the viewport and every ROP
+    kept the old stage while the call said success. A missing prim or
+    attribute, or a Set() that returns False, only skipped a line.
+
+    Returns python_node, errors (from the cook) and the values read back.
+    """
+    lines = [
+        "node = hou.pwd()",
+        "stage = node.editableStage()",
+        f"prim = stage.GetPrimAtPath({prim_path!r})",
+        "if not prim or not prim.IsValid():",
+        f"    raise RuntimeError('Prim not found: ' + {prim_path!r})",
+    ]
+    for attr_name, value in values.items():
+        lines += [
+            f"attr = prim.GetAttribute({attr_name!r})",
+            "if not attr or not attr.IsValid():",
+            f"    raise RuntimeError('No attribute ' + {attr_name!r} + ' on ' + {prim_path!r})",
+            f"if not attr.Set({value!r}):",
+            f"    raise RuntimeError('USD refused the value for ' + {attr_name!r})",
+        ]
+    python_node = node.parent().createNode("pythonscript", node_name=node_name)
+    python_node.parm("python").set("\n".join(lines))
+    # Splice: whatever read node now reads the edit, and so does the viewer.
+    readers = [(c.outputNode(), c.inputIndex()) for c in node.outputConnections()]
+    for reader, index in readers:
+        reader.setInput(index, python_node)
+    python_node.setInput(0, node)
+    moved_flags = []
+    for flag, setter in (
+        ("isDisplayFlagSet", "setDisplayFlag"),
+        ("isRenderFlagSet", "setRenderFlag"),
+    ):
+        with contextlib.suppress(Exception):
+            if getattr(node, flag)():
+                getattr(python_node, setter)(True)
+                moved_flags.append(setter)
+    place_new_node(python_node)
+    with contextlib.suppress(hou.OperationFailed):
+        python_node.cook(force=True)
+    errors = [e.strip() for e in python_node.errors()]
+    if errors:
+        # A failed edit left spliced in would break every node downstream of
+        # it: put the wiring and the flags back and remove it.
+        for reader, index in readers:
+            reader.setInput(index, node)
+        for setter in moved_flags:
+            with contextlib.suppress(Exception):
+                getattr(node, setter)(True)
+        python_node.destroy()
+        return {"python_node": None, "errors": errors, "read_back": {}}
+    _focus_network_editor(python_node)
+    read_back: dict = {}
+    with contextlib.suppress(Exception):
+        prim = python_node.stage().GetPrimAtPath(prim_path)
+        for attr_name in values:
+            read_back[attr_name] = _usd_value_to_python(prim.GetAttribute(attr_name).Get())
+    return {"python_node": python_node.path(), "errors": errors, "read_back": read_back}
+
+
 def _set_usd_attribute(
     *,
     node_path: str,
@@ -851,44 +915,20 @@ def _set_usd_attribute(
     if node is None:
         raise hou.OperationFailed(f"Node not found: {node_path}")
 
-    parent = node.parent()
-
-    # Create a Python LOP to set the attribute ("pythonscript" is the
-    # LOP type name; "python" does not exist in the Lop category)
-    python_node = parent.createNode("pythonscript", node_name="set_usd_attr_auto")
-    python_node.setInput(0, node)
-
-    # Build the Python snippet
-    val_repr = repr(value)
-    snippet = f"""
-import hou
-node = hou.pwd()
-stage = node.editableStage()
-prim = stage.GetPrimAtPath("{prim_path}")
-if prim.IsValid():
-    attr = prim.GetAttribute("{attr_name}")
-    if attr.IsValid():
-        attr.Set({val_repr})
-    else:
-        raise RuntimeError("Attribute '{attr_name}' not found on prim '{prim_path}'")
-else:
-    raise RuntimeError("Prim not found: {prim_path}")
-"""
-    python_node.parm("python").set(snippet.strip())
-    place_new_node(python_node)
-    _focus_network_editor(python_node)
-
-    # Cook to apply
-    python_node.cook(force=True)
-
-    return {
+    edit = _edit_attributes_after(node, "set_usd_attr_auto", prim_path, {attr_name: value})
+    result = {
         "node_path": node_path,
-        "python_node": python_node.path(),
+        "python_node": edit["python_node"],
         "prim_path": prim_path,
         "attr_name": attr_name,
-        "value": _usd_value_to_python(value) if HAS_PXR else value,
-        "success": True,
+        "success": not edit["errors"],
     }
+    if edit["errors"]:
+        result["errors"] = edit["errors"]
+        result["rolled_back"] = True
+    else:
+        result["value"] = edit["read_back"].get(attr_name)
+    return result
 
 
 register_handler("lops.set_usd_attribute", _set_usd_attribute)
@@ -1528,8 +1568,6 @@ def _set_light_properties(
     if node is None:
         raise hou.OperationFailed(f"Node not found: {node_path}")
 
-    parent = node.parent()
-
     # Map friendly property names to USD attribute names
     attr_name_map = {
         "intensity": "inputs:intensity",
@@ -1542,48 +1580,27 @@ def _set_light_properties(
         "enable_temperature": "inputs:enableColorTemperature",
     }
 
-    # Build Python snippet to set attributes
-    set_lines: list[str] = []
-    updated_properties: list[str] = []
-
-    for prop_name, prop_value in properties.items():
-        usd_attr = attr_name_map.get(prop_name, prop_name)
-        val_repr = repr(prop_value)
-        set_lines.append(
-            f'    attr = prim.GetAttribute("{usd_attr}")\n'
-            f"    if attr and attr.IsValid():\n"
-            f"        attr.Set({val_repr})"
-        )
-        updated_properties.append(prop_name)
-
-    if not set_lines:
-        return {
-            "prim_path": prim_path,
-            "updated_properties": [],
-            "note": "No properties to set",
-        }
-
-    snippet = (
-        "import hou\n"
-        "node = hou.pwd()\n"
-        "stage = node.editableStage()\n"
-        f'prim = stage.GetPrimAtPath("{prim_path}")\n'
-        "if prim.IsValid():\n" + "\n".join(set_lines)
+    if not properties:
+        return {"prim_path": prim_path, "updated_properties": [], "note": "No properties to set"}
+    usd_names = {name: attr_name_map.get(name, name) for name in properties}
+    edit = _edit_attributes_after(
+        node,
+        "set_light_props_auto",
+        prim_path,
+        {usd_names[name]: value for name, value in properties.items()},
     )
-
-    # "pythonscript" is the LOP type name; "python" does not exist here.
-    python_node = parent.createNode("pythonscript", node_name="set_light_props_auto")
-    python_node.setInput(0, node)
-    python_node.parm("python").set(snippet)
-    place_new_node(python_node)
-    _focus_network_editor(python_node)
-    python_node.cook(force=True)
-
-    return {
+    result = {
         "prim_path": prim_path,
-        "python_node": python_node.path(),
-        "updated_properties": updated_properties,
+        "python_node": edit["python_node"],
+        "success": not edit["errors"],
+        "updated_properties": [] if edit["errors"] else list(properties),
     }
+    if edit["errors"]:
+        result["errors"] = edit["errors"]
+        result["rolled_back"] = True
+    else:
+        result["values"] = {name: edit["read_back"].get(usd_names[name]) for name in properties}
+    return result
 
 
 register_handler("lops.set_light_properties", _set_light_properties)
