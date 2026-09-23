@@ -8,7 +8,9 @@ that knows.
 from __future__ import annotations
 
 # Built-in
+import contextlib
 import functools
+import inspect
 import json
 import logging
 import os
@@ -230,6 +232,12 @@ def _compact_tool(*args, **kwargs):
             result = await function(*call_args, **call_kwargs)
             return compact_json(result) if isinstance(result, dict) else result
 
+        # Resolved against the tool's own module: inspect.signature follows
+        # __wrapped__ to string annotations ("Context"), and mcp 1.14 then
+        # evaluated them in this module, where Context is not defined. A
+        # __signature__ stops the unwrapping.
+        with contextlib.suppress(Exception):
+            compact.__signature__ = inspect.signature(function, eval_str=True)
         register(compact)
         return function
 
