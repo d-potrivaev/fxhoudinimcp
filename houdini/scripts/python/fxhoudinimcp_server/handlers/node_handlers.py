@@ -1162,14 +1162,15 @@ def layout_children(parent_path: str, spacing: float = None) -> dict:
         parent_path: Path to the parent network.
         spacing: Optional spacing multiplier between nodes.
     """
+    # Resolve first, so a bad path is named even when layout is disabled.
+    parent = _get_node(parent_path)
+
     if not auto_layout_enabled():
         return {
             "success": False,
             "skipped": True,
             "reason": "Auto-layout is disabled (FXHOUDINIMCP_AUTO_LAYOUT=0).",
         }
-
-    parent = _get_node(parent_path)
 
     if spacing is not None:
         parent.layoutChildren(horizontal_spacing=spacing, vertical_spacing=spacing)
