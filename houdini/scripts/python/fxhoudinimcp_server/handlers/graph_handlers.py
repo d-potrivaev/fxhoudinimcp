@@ -24,7 +24,12 @@ from typing import Any
 import hou
 
 # Internal
-from fxhoudinimcp_server.config import layout_if_enabled, place_new_nodes, update_mode_warning
+from fxhoudinimcp_server.config import (
+    layout_if_enabled,
+    place_new_node,
+    place_new_nodes,
+    update_mode_warning,
+)
 from fxhoudinimcp_server.dispatcher import register_handler
 from fxhoudinimcp_server.errors import readable_message
 from fxhoudinimcp_server.handlers.node_handlers import (
@@ -32,6 +37,11 @@ from fxhoudinimcp_server.handlers.node_handlers import (
     _indirect_input_item,
     _input_table,
     _resolve_input_index,
+)
+from fxhoudinimcp_server.handlers.parameter_handlers import (
+    broken_references,
+    suggest_parms,
+    template_labels,
 )
 from fxhoudinimcp_server.outputs import license_error
 
@@ -570,13 +580,63 @@ def _parse_input_entry(entry: Any, position: int) -> dict[str, Any]:
     }
 
 
+# Attributes Houdini reads with a fixed number of components. attribrandomize
+# and attribcreate default to 3, so a "pscale" built with them is a vector that
+# copytopoints applies as a non-uniform scale, and nothing warns.
+_ATTRIB_SIZES = {"pscale": 1, "width": 1, "Alpha": 1, "N": 3, "v": 3, "Cd": 3, "up": 3}
+_ATTRIB_SIZES.update(scale=3, orient=4, rot=4)
+
+
+def _misshapen_attribs(node: hou.Node) -> dict[tuple[str, str], int]:
+    """{("point", "pscale"): 3} for standard attributes with the wrong size.
+
+    Reads only geometry that is already cooked: never forces a cook, so an
+    undisplayed heavy branch costs nothing here.
+    """
+    try:
+        if not hasattr(node, "geometry") or node.needsToCook():
+            return {}
+        geo = node.geometry()
+    except Exception:
+        return {}
+    if geo is None:
+        return {}
+    found = {}
+    for kind, attribs in (("point", geo.pointAttribs()), ("prim", geo.primAttribs())):
+        for attrib in attribs:
+            want = _ATTRIB_SIZES.get(attrib.name())
+            if want is not None and attrib.size() != want:
+                found[(kind, attrib.name())] = attrib.size()
+    return found
+
+
+def _attrib_size_warnings(node: hou.Node) -> list[str]:
+    """Misshapen attributes this node introduced, not ones it inherited."""
+    found = _misshapen_attribs(node)
+    if not found:
+        return []
+    with contextlib.suppress(Exception):
+        upstream = node.inputs()[0] if node.inputs() else None
+        if upstream is not None:
+            for key in _misshapen_attribs(upstream):
+                found.pop(key, None)
+    return [
+        f"{kind} attribute '{name}' has {size} components where Houdini's standard "
+        f"is {_ATTRIB_SIZES[name]}; set the creating node's size to match"
+        for (kind, name), size in found.items()
+    ]
+
+
 def _node_report(node: hou.Node) -> dict[str, Any]:
     report: dict[str, Any] = {
         "name": node.name(),
         "path": node.path(),
         "type": node.type().name(),
-        "errors": list(node.errors()),
-        "warnings": list(node.warnings()),
+        # A dangling channel reference cooks clean in Houdini, so it is reported
+        # as an error here: otherwise a build reads healthy while it is broken.
+        # ponytail: scans every parm of every node; cache per verify if large networks get slow.
+        "errors": list(node.errors()) + [e for p in node.parms() for e in broken_references(p)],
+        "warnings": list(node.warnings()) + _attrib_size_warnings(node),
     }
     with contextlib.suppress(Exception):
         report["bypassed"] = node.isBypassed()
@@ -608,6 +668,71 @@ def _geometry_summary(node: hou.Node) -> dict[str, Any] | None:
 
 
 ###### graph.build_network
+
+# Tried in this order when a missing parent's container type is inferred from
+# the specs, so a spec of types every context has (null, merge) lands in SOPs.
+_INFERRED_CATEGORIES = ("Sop", "Lop", "Dop", "Cop", "Chop", "Top", "Driver", "Vop")
+
+
+def _missing_parent_container(parent_path: str, nodes: Any) -> str | None:
+    """The OBJ-level type to create a missing *parent_path* as, or None.
+
+    Building from an empty /obj is the usual start, and it used to cost a
+    separate create_node before build_network, whose dry run otherwise stopped
+    at "Parent not found" without checking a single spec. Only a parent
+    directly under an existing OBJ network is created, and only when every
+    spec type resolves in one context.
+    """
+    head, _, name = parent_path.rstrip("/").rpartition("/")
+    above = hou.node(head or "/")
+    if not name or above is None or above.childTypeCategory() != hou.objNodeTypeCategory():
+        return None
+    types = {spec.get("type") for spec in nodes or [] if isinstance(spec, dict)}
+    if not types or None in types:
+        return None
+    categories = hou.nodeTypeCategories()
+    for category_name in _INFERRED_CATEGORIES:
+        category = categories.get(category_name)
+        if category and all(_resolve_node_type(category, t) is not None for t in types):
+            return _container_for(category_name)
+    return None
+
+
+def _dry_run_in_scratch(above, container: str, name: str, nodes: list, parent_path: str) -> dict:
+    """Validate *nodes* inside a throwaway container named like the real one.
+
+    Same name, so every path in the answer is the one the real build will use.
+    """
+    with hou.undos.disabler():
+        scratch = above.createNode(container, name)
+        try:
+            result = build_network(scratch.path(), nodes, dry_run=True)
+        finally:
+            scratch.destroy()
+    result["would_create_parent"] = {"path": parent_path, "type": container}
+    return result
+
+
+def _build_in_new_container(
+    parent_path: str, container: str, nodes: list, dry_run: bool, layout: bool
+) -> dict:
+    """build_network into a parent created for the purpose; a failed build removes it."""
+    head, _, name = parent_path.rstrip("/").rpartition("/")
+    above = hou.node(head or "/")
+    if dry_run:
+        return _dry_run_in_scratch(above, container, name, nodes, parent_path)
+    parent = above.createNode(container, name)
+    place_new_node(parent)
+    try:
+        result = build_network(parent.path(), nodes, dry_run=False, layout=layout)
+    except Exception:
+        parent.destroy()
+        raise
+    if result.get("success"):
+        result["created_parent"] = {"path": parent.path(), "type": container}
+    else:
+        parent.destroy()
+    return result
 
 
 def build_network(
@@ -662,6 +787,8 @@ def build_network(
     """
     parent = hou.node(parent_path)
     errors: list[str] = []
+    if parent is None and (container := _missing_parent_container(parent_path, nodes)):
+        return _build_in_new_container(parent_path, container, nodes, dry_run, layout)
     if parent is None:
         return {
             "success": False,
@@ -865,12 +992,10 @@ def build_network(
                     and parm_name not in tuple_names
                     and not _is_instance_parm(parm_name, instance_patterns)
                 ):
-                    close = get_close_matches(
-                        parm_name,
-                        sorted(parm_names | tuple_names),
-                        n=3,
-                        cutoff=0.5,
-                    )
+                    labels = dict.fromkeys(parm_names | tuple_names, "")
+                    if resolved := resolved_types.get(spec.get("type")):
+                        labels.update(template_labels(resolved.parmTemplateGroup().entries()))
+                    close = suggest_parms(parm_name, labels)
                     hint = f" Did you mean: {close}?" if close else ""
                     errors.append(
                         f"node {label}: parm '{parm_name}' does not exist "

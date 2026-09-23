@@ -1,0 +1,95 @@
+"""Fixes from driving the server against a live Houdini 22.0.368.
+
+* A ch() to a node that does not exist cooks clean: Houdini evaluates it to 0
+  and reports nothing, so a terrain went flat while verify_network said healthy.
+* "minvalue" on attribrandomize got ['values', 'valueb', 'valuea'] as its
+  did-you-mean; the parm is `min`, labelled "Min Value".
+* Every result was indent=2 JSON with doubles printed to 17 digits.
+
+hou is mocked here; the helpers are exercised directly.
+"""
+
+from __future__ import annotations
+
+# Built-in
+import json
+import os
+import sys
+from unittest.mock import MagicMock
+
+sys.modules.setdefault("hou", MagicMock())
+sys.modules.setdefault("hdefereval", MagicMock())
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "houdini", "scripts", "python"))
+
+# Internal
+import fxhoudinimcp_server.handlers.parameter_handlers as parameters  # noqa: E402
+
+from fxhoudinimcp.server import compact_json  # noqa: E402
+
+
+def _expression_parm(expression, targets):
+    """A parm holding *expression*; *targets* maps a reference token to its parm or None."""
+    parm = MagicMock()
+    parm.name.return_value = "height"
+    parm.path.return_value = "/obj/terrain/hills/height"
+    parm.keyframes.return_value = [MagicMock()]
+    parm.expression.return_value = expression
+    parm.getReferencedParm.return_value = parm
+    parm.node.return_value.parm.side_effect = targets.get
+    return parm
+
+
+class TestBrokenReferences:
+    def test_a_reference_to_a_missing_node_is_reported(self):
+        parm = _expression_parm('ch("../CTRL/hill_height")', {})
+        (message,) = parameters.broken_references(parm)
+        assert "../CTRL/hill_height" in message
+
+    def test_a_resolving_reference_is_not(self):
+        target = MagicMock()
+        target.path.return_value = "/obj/terrain/ground/sizex"
+        parm = _expression_parm('ch("../ground/sizex") * 0.1', {"../ground/sizex": target})
+        assert parameters.broken_references(parm) == []
+
+    def test_a_runtime_path_is_not_guessed_at(self):
+        parm = _expression_parm('ch("../$OS/tx")', {})
+        assert parameters.broken_references(parm) == []
+
+    def test_a_plain_value_is_skipped_without_parsing(self):
+        parm = MagicMock()
+        parm.keyframes.return_value = []
+        assert parameters.broken_references(parm) == []
+        parm.expression.assert_not_called()
+
+
+class TestSuggestParms:
+    LABELS = {
+        "min": "Min Value",
+        "max": "Max Value",
+        "mindiscrete": "Min Value",
+        "valuea": "Value A",
+        "valueb": "Value B",
+        "values": "Number of Values",
+        "dimensions": "Dimensions",
+    }
+
+    def test_a_name_guessed_from_the_label_finds_the_parm(self):
+        assert parameters.suggest_parms("minvalue", self.LABELS)[0] in ("min", "mindiscrete")
+        assert "max" in parameters.suggest_parms("maxvalue", self.LABELS)
+
+    def test_a_misspelled_name_still_matches_by_name(self):
+        assert parameters.suggest_parms("dimension", self.LABELS)[0] == "dimensions"
+
+    def test_nothing_close_suggests_nothing(self):
+        assert parameters.suggest_parms("zzzz", self.LABELS) == []
+
+
+class TestCompactJson:
+    def test_no_whitespace_and_float32_precision(self):
+        text = compact_json({"bbox_min": [-10.388985633850098, 0.5], "n": 3, "ok": True})
+        assert text == '{"bbox_min":[-10.38899,0.5],"n":3,"ok":true}'
+
+    def test_nested_values_and_non_json_types_survive(self):
+        data = json.loads(compact_json({"a": [{"b": (1.0, "x")}], "path": object}))
+        assert data["a"] == [{"b": [1.0, "x"]}]
+        assert isinstance(data["path"], str)

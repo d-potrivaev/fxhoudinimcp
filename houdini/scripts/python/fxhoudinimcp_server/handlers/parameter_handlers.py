@@ -36,13 +36,52 @@ def _available_parm_names(node: hou.Node) -> list[str]:
     return sorted(p.name() for p in node.parms())
 
 
+def _squash(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def suggest_parms(wanted: str, labels: dict[str, str], n: int = 3) -> list[str]:
+    """Parm names a mistyped *wanted* most likely meant; *labels* maps name -> label.
+
+    Name spelling alone misses the usual mistake, which is guessing a name
+    from the label: "minvalue" for attribrandomize's `min` ("Min Value")
+    scores closer to `valuea` than to `min`. So label matches come first.
+    """
+    by_label: dict[str, list[str]] = {}
+    for name, label in labels.items():
+        by_label.setdefault(_squash(label), []).append(name)
+    found = [
+        name
+        for label in get_close_matches(_squash(wanted), list(by_label), n=n, cutoff=0.8)
+        for name in by_label[label]
+    ]
+    found += get_close_matches(wanted, sorted(labels), n=n, cutoff=0.5)
+    return list(dict.fromkeys(found))[: n + 1]
+
+
+def parm_labels(node: hou.Node) -> dict[str, str]:
+    """Name -> label for every parm on a live node, multiparm instances included."""
+    return {p.name(): p.description() for p in node.parms()}
+
+
+def template_labels(templates) -> dict[str, str]:
+    """Name -> label for a node type's parm templates, folders walked."""
+    labels: dict[str, str] = {}
+    for template in templates:
+        if template.type() == hou.parmTemplateType.Folder:
+            labels.update(template_labels(template.parmTemplates()))
+        elif template.type() != hou.parmTemplateType.FolderSet:
+            labels[template.name()] = template.label()
+    return labels
+
+
 def _resolve_parm(node_path: str, parm_name: str) -> hou.Parm:
     """Return the hou.Parm on *node_path* named *parm_name* or raise."""
     node = _resolve_node(node_path)
     parm = node.parm(parm_name)
     if parm is None:
         available = _available_parm_names(node)
-        close = get_close_matches(parm_name, available, n=3, cutoff=0.4)
+        close = suggest_parms(parm_name, parm_labels(node))
         hint = f" Did you mean: {close}?" if close else ""
         raise ValueError(
             f"Parameter '{parm_name}' not found on node '{node_path}'.{hint} "
@@ -480,8 +519,6 @@ def _set_parameters(
 
     results: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
-
-    available = _available_parm_names(node)
     for name, value in params.items():
         # A list on a vector name sets the whole tuple, exactly as the single
         # setter does. The batch path used to know only per-component names,
@@ -499,7 +536,7 @@ def _set_parameters(
                 continue
         parm = node.parm(name)
         if parm is None:
-            close = get_close_matches(name, available, n=3, cutoff=0.4)
+            close = suggest_parms(name, parm_labels(node))
             hint = f" Did you mean: {close}?" if close else ""
             errors.append({"parm_name": name, "error": f"Parameter '{name}' not found.{hint}"})
             continue
@@ -620,12 +657,16 @@ def _set_expression(
 
     parm.setExpression(expression, lang)
 
-    return {
+    result = {
         "node_path": node_path,
         "parm_name": parm_name,
         "expression": expression,
         "language": language,
     }
+    broken = broken_references(parm)
+    if broken:
+        result["warning"] = "; ".join(broken)
+    return result
 
 
 register_handler("parameters.set_expression", _set_expression)
@@ -1288,6 +1329,33 @@ def _outgoing_reference(parm: hou.Parm) -> dict[str, Any] | None:
         entry["unresolved"] = unresolved
     entry["pure_reference"] = False
     return entry
+
+
+def broken_references(parm: hou.Parm) -> list[str]:
+    """Channel references in *parm* that point at a node or parameter that is not there.
+
+    Houdini evaluates such a reference to 0 or "" and reports nothing: no error,
+    no warning, and the node cooks clean. A terrain whose height reads a missing
+    ../CTRL null goes flat while every check says healthy, so this looks. Paths
+    built at runtime ($OS) are skipped rather than guessed at.
+    """
+    # Cheap gate first: this runs over every parm of every node in a verify,
+    # and _outgoing_reference raises and swallows on each plain value.
+    try:
+        if not parm.keyframes() and (
+            parm.parmTemplate().type() != hou.parmTemplateType.String
+            or "`" not in parm.unexpandedString()
+        ):
+            return []
+    except Exception:
+        return []
+    entry = _outgoing_reference(parm)
+    return [
+        f"{parm.name()}: reference '{token}' does not resolve, so it silently "
+        f"evaluates to 0 or an empty string"
+        for token in (entry or {}).get("unresolved", [])
+        if "$" not in token
+    ]
 
 
 def _capped_paths(nodes: Any, exclude: str, limit: int) -> tuple[list[str], int]:

@@ -62,7 +62,11 @@ async def build_network(
     again with the subnet as parent_path.
 
     Args:
-        parent_path: Network to build inside (e.g. "/obj/geo1").
+        parent_path: Network to build inside (e.g. "/obj/geo1"). A missing
+            parent directly under /obj is created, as the container the
+            specs' context needs (geo for SOPs, lopnet for LOPs), and
+            removed again if the build fails; a dry run reports it as
+            `would_create_parent`.
         nodes: Ordered node specs (see above).
         dry_run: Validate the whole spec without creating anything.
         layout: Also lay out the parent network afterwards (default True;
