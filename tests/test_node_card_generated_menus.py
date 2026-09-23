@@ -43,14 +43,16 @@ LOADTYPE_LABELS = (
 GENERATOR = "opmenu -l -a file1 loadtype"
 
 
-def _parm(name, items=(), labels=(), template_items=(), generator=""):
+def _parm(name, items=(), labels=(), template_items=(), generator="", menu_type=None):
     parm = MagicMock()
+    menu_type = hou.parmTemplateType.Menu if menu_type is None else menu_type
     parm.name.return_value = name
     parm.menuItems.return_value = tuple(items)
     parm.menuLabels.return_value = tuple(labels)
     template = MagicMock()
     template.menuItems.return_value = tuple(template_items)
     template.itemGeneratorScript.return_value = generator
+    template.type.return_value = menu_type
     parm.parmTemplate.return_value = template
     return parm
 
@@ -96,6 +98,15 @@ class TestGeneratedMenusOfAProbe:
     def test_a_static_menu_is_left_to_the_template(self):
         probe = _probe([_parm("group", template_items=("a",), generator="x")])
         assert graph._generated_menus_of(probe) == {}
+
+    def test_a_suggestion_menu_is_left_out(self):
+        # attribwrangle's snippet (StringReplace) and group pickers
+        # (StringToggle): their items are suggestions, not tokens.
+        snippet = _parm(
+            "snippet", ("// code",), generator="x", menu_type=hou.parmTemplateType.String
+        )
+        snippet.parmTemplate.return_value.menuType.return_value = "replace"
+        assert graph._generated_menus_of(_probe([snippet])) == {}
 
     def test_a_generator_that_yields_nothing_still_names_its_script(self):
         probe = _probe([_parm("loadtype", generator=GENERATOR)])

@@ -205,6 +205,14 @@ def _definition_stamp(node_type) -> Any:
     return None
 
 
+def _is_strict_menu(template) -> bool:
+    """A menu that rejects arbitrary text: an int menu or a "normal" string one."""
+    return template.type() == hou.parmTemplateType.Menu or (
+        template.type() == hou.parmTemplateType.String
+        and template.menuType() == hou.menuType.Normal
+    )
+
+
 def _generated_menus_of(node: hou.Node) -> dict[str, dict[str, Any]]:
     """Menus a live node computes that its type's templates do not carry.
 
@@ -224,6 +232,10 @@ def _generated_menus_of(node: hou.Node) -> dict[str, dict[str, Any]]:
                 template = parm.parmTemplate()
                 if list(template.menuItems()):
                     continue  # a static menu: the template already has it
+                if not _is_strict_menu(template):
+                    # A group picker or a wrangle's snippet list: suggestions,
+                    # not tokens, and whole VEX snippets doubled the card.
+                    continue
                 script = ""
                 with contextlib.suppress(Exception):
                     script = template.itemGeneratorScript() or ""
@@ -310,13 +322,7 @@ def _parm_names_for_type(scratch: hou.Node, node_type) -> tuple[set, set, dict, 
         with contextlib.suppress(Exception):
             template = parm.parmTemplate()
             items = list(parm.menuItems())
-            if items and (
-                template.type() == hou.parmTemplateType.Menu
-                or (
-                    template.type() == hou.parmTemplateType.String
-                    and template.menuType() == hou.menuType.Normal
-                )
-            ):
+            if items and _is_strict_menu(template):
                 menus[parm.name()] = items
     probe.destroy()
     return parm_names, tuple_names, menus, _instance_patterns(node_type), connectors
