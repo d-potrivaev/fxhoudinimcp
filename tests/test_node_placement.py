@@ -402,6 +402,8 @@ _PLACEMENT_EXEMPT = {
     # build_network's dry run into a parent that does not exist yet: validated
     # inside a same-named container, destroyed in the same call.
     ("_dry_run_in_scratch", "above"),
+    # Probe for multiparm instance menus during validation, destroyed at once.
+    ("_instance_menu_errors", "scratch"),
     # Same idea for the node card's connector probe: a throwaway container
     # under /obj, destroyed in the same call.
     ("_connectors_for_type", "root"),

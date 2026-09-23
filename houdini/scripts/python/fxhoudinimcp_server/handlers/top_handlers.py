@@ -322,6 +322,21 @@ def cook_top_node(
             "message": "Static work items generated.",
         }
 
+    # Work items that cook out of process (ROP Fetch, the local scheduler's
+    # default) load the hip FROM DISK. Cooked with unsaved changes, every item
+    # failed on "Cannot find node" for a network built this session. Houdini's
+    # UI asks to save first; there is nobody to answer that here, so save, as
+    # write_cache(background=True) does, and say so.
+    saved_first = False
+    if hou.hipFile.hasUnsavedChanges():
+        if hou.hipFile.isNewFile():
+            raise ValueError(
+                "The scene has never been saved, and TOP work items cook from the hip "
+                "on disk. Save it with save_scene(file_path=...) first."
+            )
+        hou.hipFile.save()
+        saved_first = True
+
     if block:
         try:
             node.cookWorkItems(block=True)
@@ -341,6 +356,8 @@ def cook_top_node(
         "action": "cook",
         "blocking": block,
     }
+    if saved_first:
+        result["saved_hip_first"] = hou.hipFile.path()
 
     try:
         pdg_node = _get_pdg_node(node)

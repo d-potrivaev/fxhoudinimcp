@@ -164,6 +164,48 @@ def _probe_connectors(scratch: hou.Node, node_type, parms: dict | None = None) -
                 probe.destroy()
 
 
+def _instance_menu_errors(scratch: hou.Node, node_type, parms: dict, patterns: list) -> list[str]:
+    """Menu errors on multiparm instance parms (a wedge's type1), found by probing.
+
+    A fresh probe has no instances, so these menus went unchecked: a dry run
+    passed "type1": "int" and the build then rolled back on "Invalid menu
+    item". The probe gets the spec's other parms first, which creates the
+    instances, then each instance value is checked against its real menu.
+    """
+    wanted = {
+        name: value
+        for name, value in parms.items()
+        if _is_instance_parm(name, patterns)
+        and isinstance(value, (str, int))
+        and not isinstance(value, bool)
+    }
+    if node_type is None or not wanted:
+        return []
+    problems = []
+    with hou.undos.disabler():
+        probe = scratch.createNode(node_type.name())
+        try:
+            for name, value in parms.items():
+                if name not in wanted and _expression_value(value) is None:
+                    with contextlib.suppress(Exception):
+                        _apply_parm(probe, name, value)
+            for name, value in wanted.items():
+                parm = probe.parm(name)
+                if parm is None or not _is_strict_menu(parm.parmTemplate()):
+                    continue
+                with contextlib.suppress(Exception):
+                    items = list(parm.menuItems())
+                    if problem := _menu_error(name, value, items):
+                        # These tokens are often bare numbers ('0'..'5'); the
+                        # labels are what says which one means "Integer".
+                        labels = dict(zip(items, parm.menuLabels(), strict=False))
+                        problems.append(f"{problem} Labels: {labels}")
+        finally:
+            with contextlib.suppress(Exception):
+                probe.destroy()
+    return problems
+
+
 # OBJ-level container to probe each category's types in, where more than one
 # exists (geo and sopnet both hold SOPs). Any other category is found through
 # hou.NodeType.childTypeCategory(), so Cop2, Shop, VopNet and whatever SideFX
@@ -742,17 +784,21 @@ _INFERRED_CATEGORIES = ("Sop", "Lop", "Dop", "Cop", "Chop", "Top", "Driver", "Vo
 
 
 def _missing_parent_container(parent_path: str, nodes: Any) -> str | None:
-    """The OBJ-level type to create a missing *parent_path* as, or None.
+    """The type to create a missing *parent_path* as, or None.
 
-    Building from an empty /obj is the usual start, and it used to cost a
-    separate create_node before build_network, whose dry run otherwise stopped
-    at "Parent not found" without checking a single spec. Only a parent
-    directly under an existing OBJ network is created, and only when every
-    spec type resolves in one context.
+    Building from an empty /obj or /tasks is the usual start, and it used to
+    cost a separate create_node before build_network, whose dry run otherwise
+    stopped at "Parent not found" without checking a single spec. Only a
+    parent directly under an existing OBJ network (any context's container)
+    or TOP manager (a topnet) is created, and only when every spec type
+    resolves in one context.
     """
     head, _, name = parent_path.rstrip("/").rpartition("/")
     above = hou.node(head or "/")
-    if not name or above is None or above.childTypeCategory() != hou.objNodeTypeCategory():
+    if not name or above is None:
+        return None
+    holds = above.childTypeCategory().name() if above.childTypeCategory() else None
+    if holds not in ("Object", "TopNet"):
         return None
     types = {spec.get("type") for spec in nodes or [] if isinstance(spec, dict)}
     if not types or None in types:
@@ -761,6 +807,8 @@ def _missing_parent_container(parent_path: str, nodes: Any) -> str | None:
     for category_name in _INFERRED_CATEGORIES:
         category = categories.get(category_name)
         if category and all(_resolve_node_type(category, t) is not None for t in types):
+            if holds == "TopNet":
+                return "topnet" if category_name == "Top" else None
             return _container_for(category_name)
     return None
 
@@ -1068,6 +1116,15 @@ def build_network(
                         f"node {label}: parm '{parm_name}' does not exist "
                         f"on {spec.get('type')}.{hint}"
                     )
+            errors.extend(
+                f"node {label}: {problem}"
+                for problem in _instance_menu_errors(
+                    parent,
+                    resolved_types.get(spec.get("type")),
+                    spec.get("parms") or {},
+                    instance_patterns,
+                )
+            )
         node_type = resolved_types.get(spec.get("type"))
         max_inputs = node_type.maxNumInputs() if node_type else 0
         # None when the type did not resolve: that error is already reported,
@@ -1160,8 +1217,12 @@ def build_network(
                 try:
                     written = _apply_parm(node, parm_name, value, override)
                 except Exception as exc:
+                    items = []
+                    with contextlib.suppress(Exception):
+                        items = list(node.parm(parm_name).menuItems())
+                    shown = f" Menu items: {items[:20]}" if items else ""
                     raise RuntimeError(
-                        f"{node.path()} parm '{parm_name}': {readable_message(exc)}"
+                        f"{node.path()} parm '{parm_name}': {readable_message(exc)}.{shown}"
                     ) from exc
                 for kind, found in written.items():
                     parm_reports.setdefault(node.path(), {}).setdefault(kind, {}).update(found)
