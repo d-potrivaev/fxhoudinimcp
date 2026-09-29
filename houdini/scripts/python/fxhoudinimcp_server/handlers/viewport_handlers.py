@@ -519,8 +519,11 @@ def set_viewport_direction(
     old_pivot = list(view.pivot())
     offset = [t - p for t, p in zip(view.translation(), old_pivot, strict=True)]
     if angles is not None:
+        # setRotation() takes the transpose of what buildRotate() gives: as is,
+        # the view looked along the inverse turn, (0.5, 0.3, -0.8) where a cam
+        # object with the same r looks along (-0.47, -0.34, -0.81) (22.0.429).
         rotate = hou.hmath.buildRotate(hou.Vector3(*angles))
-        view.setRotation(rotate.extractRotationMatrix3())
+        view.setRotation(rotate.extractRotationMatrix3().transposed())
     if centre is not None or distance is not None:
         new_pivot = list(centre) if centre is not None else old_pivot
         if distance is not None:
@@ -532,7 +535,9 @@ def set_viewport_direction(
     now = viewport.defaultCamera()
     now_pivot = list(now.pivot())
     result["view"] = {
-        "rotation": [round(v, 4) for v in hou.Matrix4(now.rotation()).extractRotates()],
+        "rotation": [
+            round(v, 4) for v in hou.Matrix4(now.rotation().transposed()).extractRotates()
+        ],
         "pivot": [round(v, 4) for v in now_pivot],
         "distance": round(now.translation()[2] - now_pivot[2], 4),
     }

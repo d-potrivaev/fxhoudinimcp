@@ -50,15 +50,24 @@ class _Move:
 
 
 class _Rotation:
-    """What buildRotate / extractRotationMatrix3 / Matrix4 hand around: the angles."""
+    """What buildRotate / extractRotationMatrix3 / Matrix4 hand around: the angles.
 
-    def __init__(self, angles):
+    A transposed one is the inverse turn: its angles read back scrambled.
+    """
+
+    def __init__(self, angles, transposed=False):
         self.angles = tuple(angles)
+        self.is_transposed = transposed
 
     def extractRotationMatrix3(self):
         return self
 
+    def transposed(self):
+        return _Rotation(self.angles, not self.is_transposed)
+
     def extractRotates(self):
+        if self.is_transposed:
+            return tuple(-a for a in reversed(self.angles))
         return self.angles
 
 
@@ -66,7 +75,7 @@ class _FreeView:
     """GeometryViewportCamera: a world translation, rotated about the pivot."""
 
     def __init__(self, rotation=(0.0, 0.0, 0.0), pivot=(0.0, 0.0, 0.0), distance=10.0):
-        self._rotation = _Rotation(rotation)
+        self._rotation = _Rotation(rotation, transposed=True)
         self._pivot = _Vec(*pivot)
         self._translation = _Vec(pivot[0], pivot[1], pivot[2] + distance)
 
@@ -212,6 +221,14 @@ class TestFreeView:
         }
         assert result["direction"] is None
         assert "changeType" not in str(houdini.calls)
+
+    def test_the_view_gets_the_transpose_of_buildrotate(self, houdini):
+        # The view's own rotation is laid out transposed: a cam object with the
+        # same r and this view look the same way only with .transposed().
+        viewport.set_viewport_direction(rotation=[-20, 30, 0])
+        stored = houdini.view.rotation()
+        assert stored.is_transposed
+        assert stored.angles == (-20.0, 30.0, 0.0)
 
     def test_the_reply_is_read_back_not_echoed(self, houdini):
         houdini.takes = False  # the viewport kept its old view
