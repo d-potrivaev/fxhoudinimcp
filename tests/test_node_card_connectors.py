@@ -416,6 +416,12 @@ class TestFindingAnOutput:
         with pytest.raises(ValueError, match="output index or name"):
             graph._parse_input_entry({"source": "g", "source_output": True}, 0)
 
+    def test_a_whole_float_is_still_an_index(self):
+        # int() took 1.0 before names were accepted; it must not become the name "1.0".
+        assert (
+            graph._parse_input_entry({"source": "g", "source_output": 1.0}, 0)["source_output"] == 1
+        )
+
 
 class TestBuildNetworkWiresFromAnOutputByName:
     def _network(self, monkeypatch, children=()):

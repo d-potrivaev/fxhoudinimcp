@@ -721,6 +721,8 @@ def _source_output(value: Any) -> int | str:
         raise ValueError(f"source_output must be an output index or name, got {value!r}")
     if isinstance(value, int):
         return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
     text = str(value).strip()
     return int(text) if text.lstrip("-").isdigit() else text
 
