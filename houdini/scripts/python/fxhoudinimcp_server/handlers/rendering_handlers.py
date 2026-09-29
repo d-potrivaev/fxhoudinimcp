@@ -175,29 +175,46 @@ def render_quad_view(
     if not viewports:
         raise RuntimeError("No viewports available in the Scene Viewer.")
 
+    if resolution is not None and len(resolution) != 2:
+        raise ValueError("resolution must be a list of [width, height]")
+
     saved_files = []
     base, ext = os.path.splitext(output_path)
 
-    for vp in viewports:
-        vp_name = vp.name()
-        vp_output = f"{base}_{vp_name}{ext}"
+    # A flipbook of a viewport the layout hides writes nothing, so in the
+    # default Single layout three of the four "saved" files never existed.
+    # Show all four for the capture and put the user's layout back.
+    layout = scene_viewer.viewportLayout()
+    scene_viewer.setViewportLayout(hou.geometryViewportLayout.Quad)
+    try:
+        for vp in viewports:
+            vp_name = vp.name()
+            vp_output = f"{base}_{vp_name}{ext}"
 
-        settings = scene_viewer.flipbookSettings().stash()
+            settings = scene_viewer.flipbookSettings().stash()
 
-        _no_mplay(settings)
-        settings.frameRange((hou.frame(), hou.frame()))
-        settings.output(vp_output)
+            _no_mplay(settings)
+            settings.frameRange((hou.frame(), hou.frame()))
+            settings.output(vp_output)
 
-        if resolution is not None:
-            if len(resolution) != 2:
-                raise ValueError("resolution must be a list of [width, height]")
-            settings.resolution(tuple(resolution))
+            if resolution is not None:
+                settings.useResolution(True)
+                settings.resolution(tuple(resolution))
 
-        scene_viewer.flipbook(vp, settings)
-        saved_files.append({"viewport": vp_name, "output_path": vp_output})
+            scene_viewer.flipbook(vp, settings)
+            vp_output = _find_flipbook_output(vp_output, hou.frame())
+            saved_files.append(
+                {
+                    "viewport": vp_name,
+                    "output_path": vp_output,
+                    "file_exists": os.path.isfile(vp_output),
+                }
+            )
+    finally:
+        scene_viewer.setViewportLayout(layout)
 
     return {
-        "success": True,
+        "success": all(entry["file_exists"] for entry in saved_files),
         "viewports": saved_files,
         "frame": hou.frame(),
     }
