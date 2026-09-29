@@ -466,3 +466,21 @@ class TestNodeCardConnectors:
         )
         merge = geo.node("m")
         assert [n.name() for n in merge.inputs()] == ["a", "b"]
+
+    def test_build_network_wires_from_an_output_by_name(self, call):
+        vop = hou.node("/obj").createNode("geo").createNode("attribvop")
+        wire = {"input_name": "vec", "source": "geometryvopglobal1", "source_output": "vel"}
+        spec = {"type": "vectofloat", "name": "split", "inputs": [wire]}
+        typo = call(
+            "graph.build_network",
+            parent_path=vop.path(),
+            nodes=[spec],
+            dry_run=True,
+            assert_failure=True,
+        )
+        assert "no output named 'vel'" in " ".join(typo["errors"]), typo
+        wire["source_output"] = "v"
+        call("graph.build_network", parent_path=vop.path(), nodes=[spec])
+        (connection,) = vop.node("split").inputConnections()
+        outputs = list(vop.node("geometryvopglobal1").outputNames())
+        assert connection.outputIndex() == outputs.index("v")
