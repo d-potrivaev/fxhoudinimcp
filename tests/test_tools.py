@@ -356,3 +356,15 @@ class TestParityTools:
         mock_bridge.execute.assert_called_once_with(
             "viewport.set_viewport_display", {"environment_background": False}
         )
+
+    @pytest.mark.asyncio
+    async def test_viewport_display_sends_the_grid_point_size_and_scheme(
+        self, mock_ctx, mock_bridge
+    ):
+        await set_viewport_display(
+            mock_ctx, reference_plane=False, point_size=4, color_scheme="darkgrey"
+        )
+        mock_bridge.execute.assert_called_once_with(
+            "viewport.set_viewport_display",
+            {"reference_plane": False, "point_size": 4, "color_scheme": "darkgrey"},
+        )
