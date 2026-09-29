@@ -1107,11 +1107,16 @@ def _get_attrib_stats(
     node that fails is a row with its error, not a failed call. *percentiles*
     (e.g. [5, 50, 95]) adds the distribution a median or a framing needs.
     """
+    if node_path is not None and node_paths:
+        # node_paths used to win and node_path was dropped without a word.
+        raise ValueError("Pass either node_path or node_paths, not both.")
     nodes = list(node_paths or ([] if node_path is None else [node_path]))
     if not nodes:
         raise ValueError("Pass node_path, or node_paths for several nodes.")
     quantiles = _check_percentiles(percentiles)
-    if frames is None and len(nodes) == 1:
+    # node_paths always answers rows, even with one entry: a caller looping
+    # over variants should not get a different shape when only one is left.
+    if frames is None and node_paths is None:
         return _attrib_stats_once(nodes[0], attribs, attrib_class, quantiles)
     wanted_frames = sorted({float(f) for f in frames}) if frames else [hou.frame()]
     current = hou.frame()

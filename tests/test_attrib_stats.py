@@ -186,6 +186,14 @@ class TestStatsOverFramesAndNodes:
         assert result == {"node_path": "/a", "element_count": 70}
         assert timeline["visited"] == []
 
+    def test_node_paths_of_one_still_answers_rows(self, timeline):
+        result = geometry._get_attrib_stats(node_paths=["/a"])
+        assert [r["node_path"] for r in result["rows"]] == ["/a"]
+
+    def test_node_path_and_node_paths_together_are_refused(self, timeline):
+        with pytest.raises(ValueError, match="not both"):
+            geometry._get_attrib_stats(node_path="/a", node_paths=["/b"])
+
     def test_no_node_is_refused(self):
         with pytest.raises(ValueError, match="node_paths"):
             geometry._get_attrib_stats(frames=[1])
