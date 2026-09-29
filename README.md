@@ -1,10 +1,6 @@
 <div align="center">
 
-  <img src="https://cdn.simpleicons.org/houdini/FF4713" alt="Houdini" width="80">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="https://cdn.simpleicons.org/modelcontextprotocol/ffffff" alt="MCP" width="80">
-
-  <h3 align="center">fxhoudinimcp</h3>
+  <img src="https://raw.githubusercontent.com/healkeiser/fxhoudinimcp/main/docs/images/banner.webp" alt="fxhoudinimcp: the MCP server for SideFX Houdini" width="100%">
 
   <p align="center">
     The most comprehensive MCP server for SideFX Houdini.
