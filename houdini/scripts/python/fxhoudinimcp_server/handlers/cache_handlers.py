@@ -335,7 +335,12 @@ def _clear_cache(
     if not file_pattern and not raw_pattern:
         raise ValueError(f"Could not determine file pattern for node: {node_path}")
 
-    glob_pattern = _expand_frame_pattern(raw_pattern if raw_pattern else file_pattern)
+    # _frame_glob, as get_cache_status uses: on File Cache 2.0 the raw output
+    # parm is an expression body, so a glob built from it matched nothing and
+    # this reported success with deleted_count 0 and every file still on disk.
+    glob_pattern = _frame_glob(node) or _expand_frame_pattern(
+        raw_pattern if raw_pattern else file_pattern
+    )
 
     try:
         existing_files = sorted(glob.glob(glob_pattern))
