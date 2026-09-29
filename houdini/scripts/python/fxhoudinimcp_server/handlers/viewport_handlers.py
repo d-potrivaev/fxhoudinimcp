@@ -467,8 +467,13 @@ def set_viewport_display(
     if size is not None:
         # GeometryViewportSettings has particlePointSize() and no setter, so a
         # session looking for one read back 3.0 and gave up. viewdisplay -p on
-        # the viewer sets it on every view.
-        viewer_path = f"{hou.ui.curDesktop().name()}.{scene_viewer.name()}.world"
+        # the viewer sets it on every view. The viewer keeps one set per
+        # context: .world for objects and SOPs, .solaris in a LOP network.
+        # .world from /stage read back 3.0 on every view and changed the size
+        # the object viewer showed later instead (22.0.368).
+        in_lops = scene_viewer.pwd().childTypeCategory() == hou.lopNodeTypeCategory()
+        context = "solaris" if in_lops else "world"
+        viewer_path = f"{hou.ui.curDesktop().name()}.{scene_viewer.name()}.{context}"
         _, error = hou.hscript(f"viewdisplay -p {size} {viewer_path}")
         if error.strip():
             raise RuntimeError(f"viewdisplay -p failed: {error.strip()}")

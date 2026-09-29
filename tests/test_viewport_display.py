@@ -171,6 +171,7 @@ def houdini(monkeypatch):
     viewer, views = _viewer(monkeypatch)
     state = _Houdini(monkeypatch, views)
     viewer.referencePlane.return_value = state.plane
+    state.viewer = viewer
     return state
 
 
@@ -191,6 +192,14 @@ class TestPointSize:
     def test_it_goes_through_viewdisplay_on_the_viewer(self, houdini):
         viewport.set_viewport_display(point_size=4)
         assert houdini.commands == ["viewdisplay -p 4.0 Build.panetab1.world"]
+
+    def test_in_a_lop_network_it_goes_to_the_solaris_viewer(self, houdini, monkeypatch):
+        # .world from /stage changed the object viewer's size, not the one
+        # shown (22.0.368).
+        monkeypatch.setattr(viewport.hou, "lopNodeTypeCategory", lambda: "Lop", raising=False)
+        houdini.viewer.pwd.return_value.childTypeCategory.return_value = "Lop"
+        viewport.set_viewport_display(point_size=4)
+        assert houdini.commands == ["viewdisplay -p 4.0 Build.panetab1.solaris"]
 
     def test_every_view_is_read_back(self, houdini):
         result = viewport.set_viewport_display(point_size=4)
