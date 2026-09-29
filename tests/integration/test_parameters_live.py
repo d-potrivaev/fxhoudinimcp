@@ -282,3 +282,24 @@ class TestParmTemplateTree:
 
         assert find(tree["entries"], "enable")["default_value"] is True
         assert find(tree["entries"], "items")["default_instances"] == 3
+
+
+class TestSimulationCache:
+    def test_a_write_inside_a_dop_network_names_the_network_to_reset(self, call, box):
+        dopnet = hou.node("/obj").createNode("dopnet")
+        created = call("nodes.create_node", parent_path=dopnet.path(), node_type="popsource")
+        assert created["simulation_cache"]["networks"] == [dopnet.path()]
+
+        data = call(
+            "parameters.set_parameter",
+            node_path=created["node_path"],
+            parm_name="impulserate",
+            value=400,
+        )
+        named = data["simulation_cache"]["networks"]
+        assert named == [dopnet.path()]
+        reset = call("dops.reset_simulation", node_path=named[0])
+        assert reset["reset_node"] == dopnet.path()
+
+        data = call("parameters.set_parameter", node_path=box, parm_name="scale", value=2.0)
+        assert "simulation_cache" not in data
