@@ -186,6 +186,11 @@ class TestGetParametersBulk:
         )
         node.setParmTemplateGroup(group)
         node.parm("offsety").set(5)
+        # The default is reported only where the value differs from it. set()
+        # leaves an expression-driven parm as it was, so the expression goes first.
+        for name, value in (("drifty", 3), ("gate", 1)):
+            node.parm(name).deleteAllKeyframes()
+            node.parm(name).set(value)
         result = call(
             "parameters.get_parameters",
             node_path=node.path(),
@@ -193,7 +198,8 @@ class TestGetParametersBulk:
             include_defaults=True,
         )
         parms = result["parameters"]
-        assert parms["offsetx"]["default"] == 0
+        assert parms["offsetx"]["is_at_default"] is True
+        assert "default" not in parms["offsetx"]
         assert parms["offsety"]["value"] == pytest.approx(5)
         assert parms["offsety"]["default"] == 2
         assert "default_expression" not in parms["offsety"]

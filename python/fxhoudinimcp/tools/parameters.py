@@ -498,7 +498,7 @@ async def get_parameters(
         patterns: Substrings matched against parameter name and label. Omit for
             everything, up to the cap. Required with `inside`.
         include_defaults: Also report whether each value is still the default,
-            and the default itself (`default`, `default_expression`).
+            and, where it differs, the default (`default`, `default_expression`).
         inside: Network to read instead of a single node.
         recursive: With `inside`, include every descendant, not only children.
             Nodes inside locked HDAs (a solver's own internals) are skipped

@@ -144,6 +144,16 @@ class TestRecursiveSweepStopsAtLockedAssets:
         assert len(result["rows"]) == 3
         assert "skipped_inside_locked_assets" not in result
 
+    def test_the_skipped_count_follows_node_type(self, monkeypatch):
+        # node_type="file" scanned 2 and reported every buried node skipped.
+        self._popnet(monkeypatch)
+        result = parameters._get_parameters(
+            inside="/mat/lib", patterns=["file"], recursive=True, node_type="filecache"
+        )
+        assert result["nodes_scanned"] == 1
+        # The one buried node is a "file", not a "filecache": nothing to skip.
+        assert "skipped_inside_locked_assets" not in result
+
     def test_nothing_skipped_answers_as_before(self, monkeypatch):
         _library(monkeypatch, [], descendants=[_image("/mat/lib/sub/img", "$JOB/a.exr")])
         result = parameters._get_parameters(inside="/mat/lib", patterns=["file"], recursive=True)
@@ -280,6 +290,15 @@ class TestDefaultBesideTheValue:
         }
         plain = parameters._get_parameters("/obj/geo1/box1")
         assert "default" not in plain["parameters"]["sizex"]
+
+    def test_a_parm_at_its_default_does_not_repeat_it(self, monkeypatch):
+        # The default only repeats the value there: +85% on a popsource sweep.
+        parm = self._with_default(_parm("sizex", 1.0, kind="Float"), (1.0,))
+        parm.isAtDefault.return_value = True
+        node = _node("/obj/geo1/box1", "box", [parm])
+        monkeypatch.setattr(parameters.hou, "node", lambda path: node)
+        result = parameters._get_parameters("/obj/geo1/box1", include_defaults=True)
+        assert result["parameters"]["sizex"] == {"value": 1.0, "is_at_default": True}
 
     def test_the_default_reaches_the_rows(self, monkeypatch):
         image = _image("/mat/lib/a", "$JOB/a.exr")

@@ -1453,8 +1453,12 @@ def _parm_entry(parm: hou.Parm, include_defaults: bool) -> dict[str, Any]:
     if not data_parm and isinstance(raw, str) and raw != str(entry["value"]):
         entry["raw_value"] = raw
     if include_defaults:
-        entry["is_at_default"] = parm.isAtDefault()
-        entry.update(_default_of(parm))
+        at_default = parm.isAtDefault()
+        entry["is_at_default"] = at_default
+        # At its default the default only repeats the value: on a full popsource
+        # sweep that was 2398 -> 4429 characters for nothing new.
+        if not at_default:
+            entry.update(_default_of(parm))
     return entry
 
 
@@ -1526,8 +1530,8 @@ def _get_parameters(
         patterns: Substrings matched against parameter name and label. Omit for
             every non-hidden parameter, up to the cap. Required with *inside*.
         include_defaults: Also report whether each value is still the default,
-            and the default itself (`default`, and `default_expression` when
-            the template has one).
+            and, where it differs, the default itself (`default`, and
+            `default_expression` when the template has one).
         inside: A network to read instead of one node; answers `rows`.
         recursive: With *inside*, every descendant, not only the children.
         node_type: With *inside*, only nodes of this type name.
@@ -1617,7 +1621,10 @@ def _sweep_parameters(
             with contextlib.suppress(Exception):
                 buried = node.isInsideLockedHDA()
             if buried:
-                skipped_locked += 1
+                # Counted only if the sweep would have read it: node_type="file"
+                # used to report every node of every asset as skipped.
+                if not node_type or node.type().name() == node_type:
+                    skipped_locked += 1
             else:
                 kept.append(node)
         nodes = kept
