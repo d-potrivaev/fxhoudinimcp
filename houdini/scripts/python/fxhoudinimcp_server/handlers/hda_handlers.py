@@ -1516,6 +1516,11 @@ def update_hda(node_path: str) -> dict:
             "HDA definition updated from node contents. It is embedded in the hip "
             "file, so it is kept when the scene is saved."
         )
+    elif saved is False:
+        message = (
+            "HDA definition updated from node contents, but the library file's "
+            "modification time did not change; check the file."
+        )
     else:
         message = "HDA definition updated from node contents and written to the library file."
     return {
