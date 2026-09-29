@@ -474,7 +474,8 @@ async def get_parameters(
         node_path: Node to read.
         patterns: Substrings matched against parameter name and label. Omit for
             everything, up to the cap. Required with `inside`.
-        include_defaults: Also report whether each value is still the default.
+        include_defaults: Also report whether each value is still the default,
+            and the default itself (`default`, `default_expression`).
         inside: Network to read instead of a single node.
         recursive: With `inside`, include every descendant, not only children.
         node_type: With `inside`, only nodes of this type (e.g. "mtlximage").

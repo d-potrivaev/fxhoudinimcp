@@ -1249,7 +1249,38 @@ def _parm_entry(parm: hou.Parm, include_defaults: bool) -> dict[str, Any]:
         entry["raw_value"] = raw
     if include_defaults:
         entry["is_at_default"] = parm.isAtDefault()
+        entry.update(_default_of(parm))
     return entry
+
+
+def _default_of(parm: hou.Parm) -> dict[str, Any]:
+    """The template default of one parm component: `default`, `default_expression`.
+
+    is_at_default alone said "changed" without saying from what, so comparing
+    a few nodes against their defaults meant get_node_card per type plus
+    matching components by hand, or execute_python. A template with no default
+    (a folder, a button) answers nothing.
+    """
+    found: dict[str, Any] = {}
+    with contextlib.suppress(Exception):
+        template = parm.parmTemplate()
+        index = parm.componentIndex()
+        values = template.defaultValue()
+        # A tuple per component for Float/Int/String; a menu or a toggle has
+        # a single value.
+        if isinstance(values, (tuple, list)):
+            values = values[index] if index < len(values) else (values[0] if values else None)
+        found["default"] = _serialize_value(values)
+        with contextlib.suppress(Exception):
+            expressions = template.defaultExpression()
+            # A str on a menu or a toggle: indexing it would give one character.
+            if isinstance(expressions, str):
+                expression = expressions
+            else:
+                expression = expressions[index] if index < len(expressions) else ""
+            if expression:
+                found["default_expression"] = expression
+    return found
 
 
 def _matches_patterns(parm: hou.Parm, lowered: list[str] | None) -> bool:
@@ -1286,7 +1317,9 @@ def _get_parameters(
         node_path: Node to read.
         patterns: Substrings matched against parameter name and label. Omit for
             every non-hidden parameter, up to the cap. Required with *inside*.
-        include_defaults: Also report whether each value is still the default.
+        include_defaults: Also report whether each value is still the default,
+            and the default itself (`default`, and `default_expression` when
+            the template has one).
         inside: A network to read instead of one node; answers `rows`.
         recursive: With *inside*, every descendant, not only the children.
         node_type: With *inside*, only nodes of this type name.

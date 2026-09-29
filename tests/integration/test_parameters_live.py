@@ -172,6 +172,35 @@ class TestGetParametersBulk:
         entry = result["parameters"]["sizex"]
         assert entry["value"] == pytest.approx(7.5)
         assert entry["is_at_default"] is False
+        assert entry["default"] == pytest.approx(1.0)
+
+    def test_the_default_and_its_expression_are_reported_beside_the_value(self, call):
+        node = hou.node("/obj").createNode("null")
+        group = node.parmTemplateGroup()
+        group.append(hou.FloatParmTemplate("offset", "Offset", 3, default_value=(0, 2, 0)))
+        # A template given default expressions reports zeros from defaultValue()
+        # (22.0.429), so the expression gets its own parm.
+        group.append(hou.FloatParmTemplate("drift", "Drift", 3, default_expression=("", "$F", "")))
+        group.append(
+            hou.ToggleParmTemplate("gate", "Gate", default_value=False, default_expression="$F>1")
+        )
+        node.setParmTemplateGroup(group)
+        node.parm("offsety").set(5)
+        result = call(
+            "parameters.get_parameters",
+            node_path=node.path(),
+            patterns=["offset", "drift", "gate"],
+            include_defaults=True,
+        )
+        parms = result["parameters"]
+        assert parms["offsetx"]["default"] == 0
+        assert parms["offsety"]["value"] == pytest.approx(5)
+        assert parms["offsety"]["default"] == 2
+        assert "default_expression" not in parms["offsety"]
+        assert "default_expression" not in parms["driftx"]
+        assert parms["drifty"]["default_expression"] == "$F"
+        # One expression string for the whole toggle, not its first character.
+        assert parms["gate"]["default_expression"] == "$F>1"
 
 
 class TestMultiparmInstanceDiscovery:
