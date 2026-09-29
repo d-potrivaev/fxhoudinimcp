@@ -795,10 +795,17 @@ def test_readme_gives_every_client_its_own_row():
         assert " ".join([executable, *remove]) in table.group(1), label
 
 
-def test_readme_json_examples_parse():
-    """A copied example must work: one lost its escaped backslashes once."""
+def test_readme_json_examples_parse_and_are_formatted():
+    """A copied example must work, and read like the file it goes into.
+
+    One lost its escaped backslashes once; another was squeezed onto two lines.
+    """
     text = _README.read_text(encoding="utf-8")
     blocks = re.findall(r"```json\n(.+?)```", text, re.S)
     assert blocks
     for block in blocks:
         json.loads(block)
+        # One key per line; a short list such as ["-m", "fxhoudinimcp"] may
+        # stay inline, as client configs usually write it.
+        crowded = [line for line in block.splitlines() if len(re.findall(r'"\s*:', line)) > 1]
+        assert not crowded, crowded

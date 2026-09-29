@@ -176,8 +176,14 @@ fxhoudinimcp houdini-package --write "~/Documents/houdini22.0/packages"
 Don't type the plugin path by hand: it moves whenever the Python environment does. To load the plugin from a clone instead, write the package file yourself (the path must end in `/houdini`):
 
 ```json
-{ "env": [ { "FXHOUDINIMCP": "C:/Users/you/code/fxhoudinimcp/houdini" } ],
-  "path": "$FXHOUDINIMCP" }
+{
+  "env": [
+    {
+      "FXHOUDINIMCP": "C:/Users/you/code/fxhoudinimcp/houdini"
+    }
+  ],
+  "path": "$FXHOUDINIMCP"
+}
 ```
 
 **2. Point your MCP client at the server.** Every client runs the same command, `<python> -m fxhoudinimcp`, where `<python>` is the absolute path of the Python that has `fxhoudinimcp` (`python -c "import sys; print(sys.executable)"`). Clients don't inherit your shell's PATH, and a bare `python` just shows as "disconnected".
