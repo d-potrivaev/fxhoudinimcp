@@ -506,6 +506,19 @@ def _vector3(value, name: str) -> tuple:
     return numbers
 
 
+def _looked_through(viewport) -> tuple[str | None, bool]:
+    """(camera the viewport looks through, whether it is a USD prim), or (None, False).
+
+    A USD camera prim is no node: camera() is None there and only cameraPath()
+    names it.
+    """
+    bound = viewport.camera()
+    if bound is not None:
+        return bound.path(), False
+    path = viewport.cameraPath() or None
+    return path, path is not None
+
+
 def set_viewport_direction(
     direction: str = None,
     pane_name: str = None,
@@ -563,15 +576,17 @@ def set_viewport_direction(
     scene_viewer = _find_scene_viewer(pane_name)
     viewport = scene_viewer.curViewport()
     if free_view:
-        # A USD camera prim is no node: camera() is None there, and
-        # setDefaultCamera() unbound /cameras/ucam without a word (22.0.368).
-        bound = viewport.camera()
-        looks_through = bound.path() if bound is not None else viewport.cameraPath()
+        # setDefaultCamera() unbound a USD camera prim without a word (22.0.368).
+        looks_through, is_prim = _looked_through(viewport)
         if looks_through:
+            move = (
+                "its LOP's parameters (set_parameters) or set_usd_attribute on the prim"
+                if is_prim
+                else "set_object_transform on the camera object"
+            )
             raise ValueError(
                 f"The viewport looks through {looks_through}: rotation/pivot/distance "
-                f"place the viewport's own view. Move the camera instead "
-                f"(set_object_transform), or unbind it first."
+                f"place the viewport's own view. Move the camera instead, with {move}."
             )
     if view_type is not None:
         viewport.changeType(view_type)
@@ -843,6 +858,18 @@ def frame_all(pane_name: str = None, node_paths: list = None, bounds: list = Non
         "pane_name": scene_viewer.name(),
         "viewport_name": viewport.name(),
     }
+    # Framing moves the viewport's own view, so a camera it looked through is
+    # dropped one UI tick later: both homeAll() and frameBoundingBox() did
+    # that to /obj/refcam on 22.0.368, and the reply said nothing. The camera
+    # itself does not move. Say so rather than refuse: no tool unbinds a
+    # camera, so a refusal would leave framing impossible.
+    looks_through, _ = _looked_through(viewport)
+    if looks_through:
+        result["camera_released"] = looks_through
+        result["note"] = (
+            f"The viewport stopped looking through {looks_through} to frame; the camera "
+            f"did not move. set_viewport_camera looks through it again."
+        )
     if box is None:
         viewport.homeAll()
         return result

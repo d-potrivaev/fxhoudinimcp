@@ -278,6 +278,16 @@ class TestFreeView:
             viewport.set_viewport_direction(rotation=[0, 90, 0])
         assert houdini.calls == []
 
+    def test_the_refusal_names_the_tool_for_the_kind_of_camera(self, houdini):
+        # set_object_transform cannot move a USD prim.
+        houdini.prim = "/cameras/ucam"
+        with pytest.raises(ValueError, match="set_usd_attribute") as prim:
+            viewport.set_viewport_direction(rotation=[0, 90, 0])
+        assert "set_object_transform" not in str(prim.value)
+        houdini.prim, houdini._camera = "", _FakeObj("/obj/cam1")
+        with pytest.raises(ValueError, match="set_object_transform"):
+            viewport.set_viewport_direction(rotation=[0, 90, 0])
+
     @pytest.mark.parametrize(
         ("kwargs", "named"),
         [
@@ -327,6 +337,19 @@ class TestFrameAll:
         result = viewport.frame_all()
         assert houdini.calls == ["homeAll"]
         assert result == {"success": True, "pane_name": "panetab1", "viewport_name": "persp1"}
+
+    def test_a_camera_looked_through_is_reported_released(self, houdini):
+        # homeAll() and frameBoundingBox() both dropped /obj/refcam one UI tick
+        # later, with a plain success reply (22.0.368).
+        houdini._camera = _FakeObj("/obj/refcam")
+        for kwargs in ({}, {"bounds": [-1, 0, -1, 1, 2, 1]}):
+            result = viewport.frame_all(**kwargs)
+            assert result["camera_released"] == "/obj/refcam"
+            assert "set_viewport_camera" in result["note"]
+
+    def test_a_usd_camera_is_reported_by_its_prim_path(self, houdini):
+        houdini.prim = "/cameras/ucam"
+        assert viewport.frame_all()["camera_released"] == "/cameras/ucam"
 
     def test_a_box_is_framed(self, houdini):
         result = viewport.frame_all(bounds=[-1, 0, -1, 1, 2, 1])
