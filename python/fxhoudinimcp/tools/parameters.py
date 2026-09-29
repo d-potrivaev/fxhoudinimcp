@@ -58,6 +58,9 @@ async def set_parameter(
     writes THROUGH it into the parameter it reads, so the value lands on
     another node. The reply names that parameter in `written_through`.
 
+    Inside a DOP network a write does not reset frames already simulated:
+    `simulation_cache` names the network to pass to reset_simulation.
+
     A String parameter echoes `raw_value` (the unexpanded text, `$JOB/...`)
     next to the expanded `new_value`.
 
@@ -91,6 +94,9 @@ async def set_parameters(
     override_expression: bool = False,
 ) -> dict:
     """Batch-set multiple parameters on a node.
+
+    Inside a DOP network a write does not reset frames already simulated:
+    `simulation_cache` names the network to pass to reset_simulation.
 
     Parameters that held an expression and therefore ignored the literal are
     listed in `expressions_kept`, with a top-level `warning`: a batch whose

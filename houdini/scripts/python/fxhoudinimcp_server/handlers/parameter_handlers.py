@@ -18,6 +18,7 @@ import hou
 
 # Internal
 from fxhoudinimcp_server.dispatcher import register_handler
+from fxhoudinimcp_server.handlers.dop_handlers import dop_cache_note
 from fxhoudinimcp_server.serialize import geometry_summary
 
 ###### Helpers
@@ -546,6 +547,8 @@ def _set_parameter(
                 "new_value": new_value,
             }
             result.update(report)
+            if cache := dop_cache_note([_resolve_node(node_path)]):
+                result["simulation_cache"] = cache
             return result
 
     parm = _resolve_parm(node_path, parm_name)
@@ -560,6 +563,8 @@ def _set_parameter(
 
     result = {"node_path": node_path, "parm_name": parm_name}
     result.update(written)
+    if cache := dop_cache_note([parm.node()]):
+        result["simulation_cache"] = cache
     return result
 
 
@@ -664,6 +669,8 @@ def _set_parameters(
         )
     if warnings:
         reply["warning"] = " ".join(warnings)
+    if results and (cache := dop_cache_note([node])):
+        reply["simulation_cache"] = cache
     return reply
 
 
