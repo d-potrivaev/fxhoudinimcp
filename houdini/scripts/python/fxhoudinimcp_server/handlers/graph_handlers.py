@@ -260,11 +260,25 @@ def _definition_stamp(node_type) -> Any:
 
 
 def _is_strict_menu(template) -> bool:
-    """A menu that rejects arbitrary text: an int menu or a "normal" string one."""
-    return template.type() == hou.parmTemplateType.Menu or (
-        template.type() == hou.parmTemplateType.String
-        and template.menuType() == hou.menuType.Normal
-    )
+    """A menu whose value build_network checks against its tokens.
+
+    Houdini itself refuses a value off the menu only on a Menu parm; a String
+    parm with a "normal" menu takes any text on set() (measured on 22.0.429).
+    Such a menu is still checked, because a typo in a token there writes a
+    value nothing reads -- but not on a code field (tag editor = 1), where the
+    menu only inserts snippets and the text is the point: a popforce's
+    VEXpression (localnoiseexpression) was refused as "not a menu item".
+    """
+    if template.type() == hou.parmTemplateType.Menu:
+        return True
+    if template.type() != hou.parmTemplateType.String:
+        return False
+    if template.menuType() != hou.menuType.Normal:
+        return False
+    with contextlib.suppress(Exception):
+        if template.tags().get("editor") == "1":
+            return False
+    return True
 
 
 def _generated_menus_of(node: hou.Node) -> dict[str, dict[str, Any]]:
@@ -362,9 +376,8 @@ def _parm_names_for_type(
     """Instantiate a type once to learn its parm names, tuple names, menus and
     multiparm instance patterns.
 
-    The third element maps a strict-menu parm name to its token list. Only
-    menus that reject arbitrary text are recorded (int menus and "normal"
-    string menus); a free-text field with a suggestion menu is not a menu.
+    The third element maps a strict-menu parm name to its token list (see
+    _is_strict_menu); a free-text field with a suggestion menu is not a menu.
     The fourth is what `_instance_patterns` returns, the fifth the probe's
     connectors (the same probe answers both questions, and probing is not
     free). Creation scripts run here on purpose: the build that follows runs
