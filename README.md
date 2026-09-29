@@ -188,7 +188,7 @@ CLI clients register it with their own command. File-based clients take this ent
 {
   "mcpServers": {
     "fxhoudini": {
-      "command": "C:\Program Files\Python311\python.exe",
+      "command": "C:\\Program Files\\Python311\\python.exe",
       "args": ["-m", "fxhoudinimcp"]
     }
   }

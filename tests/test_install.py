@@ -793,3 +793,12 @@ def test_readme_gives_every_client_its_own_row():
             label
         )
         assert " ".join([executable, *remove]) in table.group(1), label
+
+
+def test_readme_json_examples_parse():
+    """A copied example must work: one lost its escaped backslashes once."""
+    text = _README.read_text(encoding="utf-8")
+    blocks = re.findall(r"```json\n(.+?)```", text, re.S)
+    assert blocks
+    for block in blocks:
+        json.loads(block)
