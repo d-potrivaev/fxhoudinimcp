@@ -52,6 +52,7 @@ class TestDops:
         )
 
 
+@pytest.mark.usefixtures("saved_hip")
 class TestTops:
     def test_top_cook_lifecycle(self, call):
         topnet = call("nodes.create_node", parent_path="/obj", node_type="topnet", name="pdg")[
@@ -518,13 +519,11 @@ class TestMopUp:
         assert "{0,0,1}" in str(code)
         validated = call("vex.validate_vex", node_path=wrangle)
         assert validated["is_valid"] is True, validated
-        call(
-            "vex.create_vex_expression",
-            node_path=wrangle,
-            parm_name="tx",
-            expression="@Frame",
-            allow_error=True,
+        expr = call(
+            "vex.create_vex_expression", node_path="/obj/g", parm_name="tx", vex_code="$F * 2"
         )
+        assert expr["success"] is True, expr
+        assert hou.parm("/obj/g/tx").expression() == "$F * 2"
 
     def test_lops_and_materials_extras(self, call):
         lopnet = call("nodes.create_node", parent_path="/obj", node_type="lopnet", name="stage")[
@@ -536,7 +535,8 @@ class TestMopUp:
         assert prims, prims
         rig = call("lops.create_light_rig", parent_path=lopnet, preset="three_point")
         assert rig, rig
-        types = call("materials.list_material_types")
+        # Filtered: the full list (1100+ types) is capped before "principled".
+        types = call("materials.list_material_types", filter="principled")
         assert "principled" in str(types)
 
     def test_rendering_and_viewport_extras(self, call, tmp_path):

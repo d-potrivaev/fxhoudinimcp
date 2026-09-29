@@ -46,9 +46,10 @@ class TestBuildSopChain:
             "workflow.build_sop_chain",
             parent_path=geo,
             steps=[{"type": "box"}, {"type": "not_a_real_sop"}],
-            expect_error=True,
+            assert_failure=True,
         )
         assert "not_a_real_sop" in str(result)
+        assert not result.get("created"), result
 
 
 class TestCreateMaterial:
