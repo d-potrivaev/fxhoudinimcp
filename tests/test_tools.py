@@ -301,6 +301,29 @@ class TestEvidenceTools:
         )
 
     @pytest.mark.asyncio
+    async def test_get_parameters_into_locked_assets(self, mock_ctx, mock_bridge):
+        from fxhoudinimcp.tools.parameters import get_parameters
+
+        mock_bridge.execute.return_value = {"rows": []}
+        await get_parameters(
+            mock_ctx,
+            inside="/obj/sim",
+            patterns=["file"],
+            recursive=True,
+            include_locked_assets=True,
+        )
+        mock_bridge.execute.assert_called_once_with(
+            "parameters.get_parameters",
+            {
+                "include_defaults": False,
+                "patterns": ["file"],
+                "inside": "/obj/sim",
+                "recursive": True,
+                "include_locked_assets": True,
+            },
+        )
+
+    @pytest.mark.asyncio
     async def test_verify_network_does_not_force_a_cook_by_default(self, mock_ctx, mock_bridge):
         from fxhoudinimcp.tools.graph import verify_network
 

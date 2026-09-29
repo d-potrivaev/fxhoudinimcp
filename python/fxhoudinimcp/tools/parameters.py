@@ -456,6 +456,7 @@ async def get_parameters(
     inside: str | None = None,
     recursive: bool = False,
     node_type: str | None = None,
+    include_locked_assets: bool = False,
 ) -> dict:
     """Read many parameter values at once, matched by name or label substring.
 
@@ -477,7 +478,10 @@ async def get_parameters(
         include_defaults: Also report whether each value is still the default.
         inside: Network to read instead of a single node.
         recursive: With `inside`, include every descendant, not only children.
+            Nodes inside locked HDAs (a solver's own internals) are skipped
+            and counted in `skipped_inside_locked_assets`.
         node_type: With `inside`, only nodes of this type (e.g. "mtlximage").
+        include_locked_assets: With `recursive`, read inside locked HDAs too.
     """
     bridge = _get_bridge(ctx)
     params: dict[str, Any] = {"include_defaults": include_defaults}
@@ -490,4 +494,6 @@ async def get_parameters(
         params["recursive"] = recursive
         if node_type is not None:
             params["node_type"] = node_type
+        if include_locked_assets:
+            params["include_locked_assets"] = True
     return await bridge.execute("parameters.get_parameters", params)

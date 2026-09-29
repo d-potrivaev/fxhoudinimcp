@@ -1268,6 +1268,7 @@ def _get_parameters(
     inside: str | None = None,
     recursive: bool = False,
     node_type: str | None = None,
+    include_locked_assets: bool = False,
     **_: Any,
 ) -> dict[str, Any]:
     """Current values for every parameter matching any of several patterns.
@@ -1290,11 +1291,17 @@ def _get_parameters(
         inside: A network to read instead of one node; answers `rows`.
         recursive: With *inside*, every descendant, not only the children.
         node_type: With *inside*, only nodes of this type name.
+        include_locked_assets: With *recursive*, also the nodes inside locked
+            HDAs (a POP solver's own file and include parameters). Off by
+            default: they buried the few real file paths of a network under
+            hundreds of rows.
     """
     if inside is not None:
         if node_path is not None:
             raise ValueError("Pass either node_path (one node) or inside (a network), not both.")
-        return _sweep_parameters(inside, patterns, include_defaults, recursive, node_type)
+        return _sweep_parameters(
+            inside, patterns, include_defaults, recursive, node_type, include_locked_assets
+        )
     if node_path is None:
         raise ValueError("node_path is required (or inside, to read a whole network).")
     node = hou.node(node_path)
@@ -1332,6 +1339,7 @@ def _sweep_parameters(
     include_defaults: bool,
     recursive: bool,
     node_type: str | None,
+    include_locked_assets: bool = False,
 ) -> dict[str, Any]:
     """get_parameters over the nodes of a network, as one table of rows."""
     from fxhoudinimcp_server.handlers.node_handlers import _VALUELESS_PARM_TYPES
@@ -1347,7 +1355,26 @@ def _sweep_parameters(
             "is not an answer anyone can read. Name what to look for, e.g. ['file']."
         )
     lowered = [p.lower() for p in patterns]
-    nodes = parent.allSubChildren() if recursive else parent.children()
+    nodes = list(parent.allSubChildren() if recursive else parent.children())
+    skipped_locked = 0
+    if recursive and not include_locked_assets:
+        # A locked asset's instance stays (its interface is the user's); what
+        # is inside it is the asset's own business -- unless the sweep was
+        # asked to start inside one.
+        asked_inside = False
+        with contextlib.suppress(Exception):
+            asked_inside = parent.isLockedHDA() or parent.isInsideLockedHDA()
+        if not asked_inside:
+            kept = []
+            for node in nodes:
+                buried = False
+                with contextlib.suppress(Exception):
+                    buried = node.isInsideLockedHDA()
+                if buried:
+                    skipped_locked += 1
+                else:
+                    kept.append(node)
+            nodes = kept
     rows: list[dict[str, Any]] = []
     matched = 0
     scanned = 0
@@ -1383,6 +1410,16 @@ def _sweep_parameters(
         "returned": len(rows),
         "truncated": matched > len(rows),
         "rows": rows,
+        **(
+            {
+                "skipped_inside_locked_assets": skipped_locked,
+                "note": (
+                    "Nodes inside locked HDAs were not read; include_locked_assets=True reads them."
+                ),
+            }
+            if skipped_locked
+            else {}
+        ),
     }
 
 
