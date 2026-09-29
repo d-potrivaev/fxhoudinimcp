@@ -19,6 +19,7 @@ import hou
 # Internal
 from fxhoudinimcp_server.callbacks import CallbackError, callback_script, press
 from fxhoudinimcp_server.dispatcher import register_handler
+from fxhoudinimcp_server.errors import readable_message
 from fxhoudinimcp_server.serialize import geometry_summary
 
 ###### Helpers
@@ -284,6 +285,23 @@ def _is_locked(parm: hou.Parm) -> bool:
     return False
 
 
+def _words(text: str) -> list[str]:
+    """*text* split into lowercase words, camelCase and snake_case alike."""
+    return [w.lower() for w in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+", text)]
+
+
+def _names_word(text: str, name: str) -> bool:
+    """Whether *name* is a whole word (or a run of words) of *text*.
+
+    `resolution` is a word of `updateResolutionParameters`; `t` is not a word
+    of `setTranslate`, which a plain substring test would have matched.
+    """
+    wanted = _words(name)
+    found = _words(text)
+    size = len(wanted)
+    return bool(wanted) and any(found[i : i + size] == wanted for i in range(len(found) - size + 1))
+
+
 def locked_controllers(parm: hou.Parm) -> list[dict[str, Any]]:
     """Menu and toggle parms on *parm*'s node whose Python callback names its tuple.
 
@@ -304,7 +322,7 @@ def locked_controllers(parm: hou.Parm) -> list[dict[str, Any]]:
         if other.name() == parm.name():
             continue
         callback = callback_script(other)
-        if not callback or tuple_name not in callback.lower():
+        if not callback or not _names_word(callback, tuple_name):
             continue
         with contextlib.suppress(Exception):
             template = other.parmTemplate()
@@ -376,6 +394,11 @@ def _run_callback(parm: hou.Parm) -> dict[str, Any] | None:
         route = press(parm)
     except CallbackError as exc:
         return {"run": False, "route": "python", "error": str(exc).splitlines()[0]}
+    except Exception as exc:
+        # The Hscript route goes through pressButton(), which raises
+        # hou.OperationFailed ("callback script could not be run") -- after
+        # set() already wrote the value, so the write itself stands.
+        return {"run": False, "route": "hscript", "error": readable_message(exc)}
     return {"run": True, "route": route}
 
 
@@ -751,6 +774,10 @@ def _set_parameters(
             if "expr" not in value or parm is None:
                 problem = "no such parameter" if parm is None else 'a dict value needs "expr"'
                 errors.append({"parm_name": name, "error": f"{problem}: {value!r}"})
+                continue
+            # Named as locked before the write, as every other branch here does.
+            if locked := locked_message(parm):
+                errors.append(_error_entry(name, LockedParmError(locked)))
                 continue
             language = str(value.get("language", "hscript")).lower()
             try:

@@ -429,14 +429,17 @@ def _parm_names_for_type(
     key = (node_type.category().name(), node_type.name(), _definition_stamp(node_type))
     cached = _PARM_PROBE_CACHE.get(key)
     if cached is not None:
-        result, types, expressions = cached
+        result, types, expressions, shut_parms = cached
         if parm_types is not None:
             parm_types.update(types)
         if factory_expressions is not None:
             factory_expressions.update(copy.deepcopy(expressions))
+        if locked is not None:
+            locked.update(copy.deepcopy(shut_parms))
         return copy.deepcopy(result)
     parm_types = {} if parm_types is None else parm_types
     factory_expressions = {} if factory_expressions is None else factory_expressions
+    locked = {} if locked is None else locked
     scene_menus = False
     probe = scratch.createNode(node_type.name())
     connectors = _connectors_of(probe)
@@ -481,12 +484,13 @@ def _parm_names_for_type(
             copy.deepcopy(result),
             dict(parm_types),
             copy.deepcopy(factory_expressions),
+            copy.deepcopy(locked),
         )
     return result
 
 
 # (category, type, definition stamp) -> (probe result, parm types, factory
-# expressions); see _parm_names_for_type.
+# expressions, locked parms); see _parm_names_for_type.
 _PARM_PROBE_CACHE: dict[tuple, tuple] = {}
 
 
@@ -1194,14 +1198,15 @@ def build_network(
                 )
                 if node_type is not None and spec.get("parms") and names_an_input:
                     spec_connectors[index] = _probe_connectors(parent, node_type, spec["parms"])
-                # A lock is the node's own state, so a spec that writes a
-                # locked parm, or runs callbacks that may set or clear one,
-                # is replayed in order on a probe of its own.
+                # A lock is the node's own state, so a spec that writes a parm
+                # a fresh node locks is replayed in order on a probe of its
+                # own -- with its callbacks when it asks for run_callbacks,
+                # since those are what clear the lock. Only such a spec: the
+                # replay runs the spec's real callbacks, dry run included, and
+                # a callback's effects outside the probe cannot be undone.
                 shut = locked_knowledge.get(spec.get("type")) or {}
                 aimed = set(spec.get("parms") or {}) | set(_spec_expressions(spec))
-                if node_type is not None and (
-                    spec.get("run_callbacks") or any(name in shut for name in aimed)
-                ):
+                if node_type is not None and any(name in shut for name in aimed):
                     found = _locked_on_build(parent, node_type, spec)
                     if found:
                         label = spec.get("name") or spec.get("type") or f"#{index}"

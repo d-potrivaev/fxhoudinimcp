@@ -89,9 +89,11 @@ class _Parm:
         return f"{self._node.path()}/{self._name}"
 
     def tuple(self):
-        parm_tuple = MagicMock()
-        parm_tuple.name.return_value = self.tuple_name
-        return parm_tuple
+        # The node's own tuple, components included, as HOM gives it.
+        found = None
+        if hasattr(self._node, "parmTuple"):
+            found = self._node.parmTuple(self.tuple_name)
+        return found if found is not None else _ParmTuple(self.tuple_name, [self])
 
     def parmTemplate(self):  # noqa: N802 -- HOM spelling
         return self._template
@@ -435,6 +437,20 @@ class TestBuildNetworkRefusesALockedParmUpFront:
         assert graph.build_network("/stage", spec, dry_run=True)["valid"] is True
         assert build == []  # no replay probe
 
+    def test_run_callbacks_alone_replays_nothing(self, build, hom):
+        # The replay runs the spec's real callbacks, dry run included; a spec
+        # that aims at no parm a fresh node locks is not replayed at all.
+        spec = [
+            {
+                "type": "karmarendersettings",
+                "name": "krs",
+                "parms": {"res_mode": "manual"},
+                "run_callbacks": True,
+            }
+        ]
+        assert graph.build_network("/stage", spec, dry_run=True)["valid"] is True
+        assert build == [] and hom == []
+
 
 class TestApplyParm:
     def test_a_locked_component_raises_before_the_write(self):
@@ -467,3 +483,79 @@ class TestApplyParm:
         locked: dict = {}
         graph._parm_names_for_type(scratch, MagicMock(), locked=locked)
         assert locked == {"resolution": ["resolutiony"], "resolutiony": ["resolutiony"]}
+
+
+class TestTheProbeCacheKeepsTheLocks:
+    def test_a_second_probe_of_the_same_type_still_reports_locked(self, monkeypatch):
+        monkeypatch.setattr(graph, "_PARM_PROBE_CACHE", {})
+        node = _KarmaSettings()
+        node.parmTuples = lambda: [
+            node.parmTuple("resolution"),
+            _ParmTuple("samples", [node.plain]),
+        ]
+        node.parms = lambda: [node.res_mode, node.resx, node.resy, node.plain]
+        scratch = MagicMock()
+        scratch.createNode.return_value = node
+        node_type = MagicMock()
+        node_type.name.return_value = "karmarendersettings"
+        node_type.category.return_value.name.return_value = "Lop"
+        node_type.definition.return_value = None
+
+        first: dict = {}
+        graph._parm_names_for_type(scratch, node_type, locked=first)
+        second: dict = {}
+        graph._parm_names_for_type(scratch, node_type, locked=second)
+
+        assert scratch.createNode.call_count == 1, "the second probe comes from the cache"
+        assert first == {"resolution": ["resolutiony"], "resolutiony": ["resolutiony"]}
+        assert second == first
+
+
+class TestACallbackThatCannotRunIsReported:
+    def test_an_hscript_callback_that_raises_leaves_the_write_standing(self):
+        # pressButton() raises hou.OperationFailed on the Hscript route after
+        # set() already wrote the value: the write is reported as done.
+        node = _KarmaSettings()
+        node.res_mode._template._language = hou.scriptLanguage.Hscript
+
+        def refuse(*args):
+            raise hou.OperationFailed("callback script could not be run")
+
+        node.res_mode.pressButton = refuse
+        info = parameters._write_parm(node.res_mode, "manual", run_callbacks=True)
+        assert node.res_mode._value == "manual"
+        assert info["callback_run"] is False
+        assert "could not be run" in info["callback_error"]
+
+
+class TestTheControllerNamesTheTupleAsAWord:
+    def test_a_camel_case_word_counts(self):
+        callback = "__import__('loputils').updateResolutionParameters(hou.pwd(),True)"
+        assert parameters._names_word(callback, "resolution")
+
+    def test_a_short_name_inside_another_word_does_not(self):
+        assert not parameters._names_word("hou.pwd().setTranslate((0, 0, 0))", "t")
+        assert not parameters._names_word("node.resize()", "size")
+        assert not parameters._names_word("hou.pwd().parm('scale')", "s")
+
+    def test_a_short_name_on_its_own_does(self):
+        assert parameters._names_word("hou.pwd().parmTuple('t').set((0, 0, 0))", "t")
+        assert parameters._names_word("update_res_mode(kwargs)", "res_mode")
+
+    def test_a_menu_that_names_another_short_tuple_is_not_a_controller(self):
+        node = _KarmaSettings()
+        node.resx.tuple_name = node.resy.tuple_name = "s"
+        node.parmTuple = lambda name: (
+            _ParmTuple("s", [node.resx, node.resy]) if name == "s" else None
+        )
+        assert parameters.locked_controllers(node.resy) == []
+
+
+class TestAnExpressionIntoALockedParm:
+    def test_the_expr_form_is_refused_before_the_write(self, monkeypatch):
+        node = _KarmaSettings()
+        monkeypatch.setattr(parameters, "_resolve_node", lambda path: node)
+        reply = parameters._set_parameters("/stage/krs", {"resolutiony": {"expr": "ch('x')"}})
+        assert reply["errors"][0]["locked"] is True
+        assert "res_mode" in reply["errors"][0]["error"]
+        assert node.resy.calls == []

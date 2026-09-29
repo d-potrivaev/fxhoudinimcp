@@ -69,7 +69,8 @@ async def build_network(
     built, with `locked_parms` naming the menu whose callback sets the lock.
     Houdini runs callbacks only from the UI: "run_callbacks": true on the spec
     runs each parm's callback after its write, so {"res_mode": "manual",
-    "resolution": [1920, 1080]} builds.
+    "resolution": [1920, 1080]} builds. Validation replays a spec on a probe,
+    its callbacks included, only when it writes a parm a fresh node locks.
 
     There is no "children" key: build the subnet, then call build_network
     again with the subnet as parent_path.
