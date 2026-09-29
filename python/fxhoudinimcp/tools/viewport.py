@@ -9,6 +9,9 @@ from __future__ import annotations
 
 # Built-in
 import asyncio
+import os
+import tempfile
+import time
 from typing import Any
 
 # Third-party
@@ -16,6 +19,20 @@ from fxhoudinimcp._sdk import Context
 
 # Internal
 from fxhoudinimcp.server import _get_bridge, mcp
+
+
+def capture_path(output_path: str | None, prefix: str) -> str:
+    """``output_path``, or a fresh PNG under the temp dir when none was given.
+
+    Without it the agent had to invent a path on every capture. The temp dir
+    is this process's, which is Houdini's machine unless FXHOUDINIMCP_BIND
+    opened the plugin to remote clients; pass a shared path then.
+    """
+    if output_path:
+        return output_path
+    folder = os.path.join(tempfile.gettempdir(), "fxhoudinimcp")
+    os.makedirs(folder, exist_ok=True)
+    return os.path.join(folder, f"{prefix}_{time.time_ns() // 1_000_000}.png")
 
 
 @mcp.tool()
@@ -172,7 +189,7 @@ async def set_viewport_direction(
 @mcp.tool()
 async def capture_screenshot(
     ctx: Context,
-    output_path: str,
+    output_path: str | None = None,
     pane_name: str | None = None,
     settle_seconds: float = 0,
 ) -> dict:
@@ -183,7 +200,7 @@ async def capture_screenshot(
     get_scene_summary unless visual confirmation is genuinely needed.
 
     Args:
-        output_path: Image file path.
+        output_path: Image file path. Default: a new PNG in the temp dir.
         pane_name: Pane tab name.
         settle_seconds: Wait this long before capturing, without blocking
             Houdini, so a Karma viewport can converge after a change. Use
@@ -192,7 +209,7 @@ async def capture_screenshot(
     bridge = _get_bridge(ctx)
     if settle_seconds > 0:
         await asyncio.sleep(min(settle_seconds, 120))
-    params: dict[str, Any] = {"output_path": output_path}
+    params: dict[str, Any] = {"output_path": capture_path(output_path, "screenshot")}
     if pane_name is not None:
         params["pane_name"] = pane_name
     return await bridge.execute("viewport.capture_screenshot", params)
@@ -201,7 +218,7 @@ async def capture_screenshot(
 @mcp.tool()
 async def capture_network_editor(
     ctx: Context,
-    output_path: str,
+    output_path: str | None = None,
     node_path: str | None = None,
 ) -> dict:
     """Capture a screenshot of the network editor.
@@ -215,11 +232,11 @@ async def capture_network_editor(
     node connections unless visual confirmation of wiring is genuinely needed.
 
     Args:
-        output_path: Image file path.
+        output_path: Image file path. Default: a new PNG in the temp dir.
         node_path: Node path to frame before capture.
     """
     bridge = _get_bridge(ctx)
-    params: dict[str, Any] = {"output_path": output_path}
+    params: dict[str, Any] = {"output_path": capture_path(output_path, "network")}
     if node_path is not None:
         params["node_path"] = node_path
     return await bridge.execute("viewport.capture_network_editor", params)
