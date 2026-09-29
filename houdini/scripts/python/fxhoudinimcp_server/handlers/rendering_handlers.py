@@ -456,6 +456,27 @@ def create_render_node(
     }
 
 
+# Renderers that write their image from a separate process (husk, mantra).
+# render() can return before the file lands, and a Karma CPU frame took ~3 s to
+# appear on a laptop: the 2 s default called that render "nothing was written".
+_OUT_OF_PROCESS_RENDERERS = ("karma", "usdrender", "usdrender_rop", "ifd", "karmarendersettings")
+_OUT_OF_PROCESS_GRACE = 20.0
+
+
+def _render_grace(node) -> float:
+    """Seconds to keep looking for a render's file: longer for out-of-process renderers.
+
+    The wait ends the moment a file (or an error) appears, so the extra time is
+    only paid by a render that really wrote nothing.
+    """
+    from fxhoudinimcp_server.config import output_grace_seconds
+
+    grace = output_grace_seconds()
+    if node.type().name().split("::")[0] in _OUT_OF_PROCESS_RENDERERS:
+        return max(grace, _OUT_OF_PROCESS_GRACE)
+    return grace
+
+
 ###### rendering.start_render
 
 # Where ROP-style nodes keep their frame range.
@@ -844,7 +865,7 @@ def _render_in_foreground(
     # verifying a screenshot of an image that was never written, so read the
     # node's own errors and whether the files moved.
     with at_frame(first_frame):
-        verdict = write_verdict(node, before, action="Render")
+        verdict = write_verdict(node, before, action="Render", grace=_render_grace(node))
     return {
         "node_path": node_path,
         "category": category,
