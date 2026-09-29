@@ -94,10 +94,23 @@ def set_other_objects(mode: str | None) -> str | None:
     return applied
 
 
+def _in_lops(viewer) -> bool:
+    """Whether *viewer* shows a LOP network (its cameras are prims) or not (nodes)."""
+    return viewer.pwd().childTypeCategory() == hou.lopNodeTypeCategory()
+
+
 def _restore_cameras(cameras: list) -> None:
-    """Bind each recorded (viewer, view name, camera path) again where it changed."""
-    for tab, name, path in cameras:
+    """Bind each recorded (viewer, view name, camera path) again where it changed.
+
+    Only while the viewer is in the same kind of network as when it was
+    recorded. Houdini keeps a camera per context itself; a USD prim path bound
+    again in an object network matched nothing, and the view drew through it
+    with the wrong aspect (22.0.368).
+    """
+    for tab, name, path, lops in cameras:
         with contextlib.suppress(Exception):
+            if _in_lops(tab) != lops:
+                continue
             viewport = next(v for v in tab.viewports() if v.name() == name)
             current = viewport.camera()
             now = current.path() if current is not None else viewport.cameraPath()
@@ -135,7 +148,7 @@ def keep_viewer_state() -> Iterator[None]:
                     # A USD camera prim is a path, not a node.
                     path = camera.path() if camera is not None else viewport.cameraPath()
                 if path:
-                    cameras.append((tab, viewport.name(), path))
+                    cameras.append((tab, viewport.name(), path, _in_lops(tab)))
     try:
         yield
     finally:

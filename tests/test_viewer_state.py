@@ -171,6 +171,17 @@ class TestKeepViewerState:
             houdini.editor.cd("/obj/g")
         assert [node.path() for node in houdini.selection] == ["/obj/g/box1"]
 
+    def test_a_camera_is_not_carried_into_another_kind_of_network(self, houdini):
+        # Houdini keeps a camera per context itself. A USD prim path bound
+        # again in /obj matched nothing: the view drew through it with the
+        # wrong aspect (22.0.368).
+        houdini.pwd = "/stage"
+        with ui.keep_viewer_state():
+            houdini.editor.cd("/obj/g")
+        for run_later in houdini.deferred:
+            run_later()
+        assert all(view.bound == [] for view in houdini.views)
+
     def test_a_selection_outside_the_new_network_is_not_selected_again(self, houdini):
         # Houdini's editor follows a selected node to its network on the next
         # UI tick: re-selecting /obj/geo1 sent the editor back from /obj/g to
