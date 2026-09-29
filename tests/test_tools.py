@@ -36,7 +36,13 @@ class TestSceneTools:
         mock_bridge.execute.assert_called_once_with("scene.new_scene", {"save_current": True})
 
     @pytest.mark.asyncio
-    async def test_connection_status_success(self, mock_ctx, mock_bridge):
+    async def test_connection_status_success(self, mock_ctx, mock_bridge, monkeypatch):
+        from fxhoudinimcp.tools import session
+
+        async def one_session(bridge):
+            return [{"port": 8100, "pid": 123, "current": True, "started_here": False}]
+
+        monkeypatch.setattr(session, "list_sessions", one_session)
         mock_bridge.base_url = "http://localhost:8100"
         mock_bridge.health_check.return_value = {"status": "ok", "pid": 123}
         result = await get_houdini_connection_status(mock_ctx)
@@ -44,6 +50,7 @@ class TestSceneTools:
             "connected": True,
             "base_url": "http://localhost:8100",
             "health": {"status": "ok", "pid": 123},
+            "sessions": [{"port": 8100, "pid": 123, "current": True, "started_here": False}],
         }
 
     @pytest.mark.asyncio

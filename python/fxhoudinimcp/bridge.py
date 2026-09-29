@@ -12,6 +12,7 @@ The server returns the function's return value JSON-encoded.
 from __future__ import annotations
 
 # Built-in
+import asyncio
 import json
 import logging
 import uuid
@@ -52,23 +53,28 @@ async def find_servers(
     every server found rather than just the first, so a caller can say how many
     Houdini sessions are running instead of silently picking one.
 
-    Probing is cheap because mcp.health touches no HOM: a closed port refuses
-    immediately, and a live one answers without waiting on Houdini's main thread.
+    mcp.health touches no HOM, so a live Houdini answers in milliseconds even
+    while its main thread is busy. The ports are probed at once: on Windows a
+    closed localhost port is not refused but times out, and one after another
+    the 16 cost 15.8 s at every server start, against 1.1 s together.
     """
-    found: list[dict[str, Any]] = []
+
+    async def probe(client: httpx.AsyncClient, port: int) -> dict[str, Any] | None:
+        try:
+            response = await client.post(f"http://{host}:{port}/api", data=_rpc_body("mcp.health"))
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:
+            return None  # nothing there, or not our endpoint
+        if isinstance(payload, dict) and payload.get("status") == "ok":
+            return {**payload, "port": port}
+        return None
+
     async with httpx.AsyncClient(timeout=timeout) as client:
-        for port in range(base, base + max_tries):
-            try:
-                response = await client.post(
-                    f"http://{host}:{port}/api", data=_rpc_body("mcp.health")
-                )
-                response.raise_for_status()
-                payload = response.json()
-            except Exception:
-                continue  # nothing there, or not our endpoint
-            if isinstance(payload, dict) and payload.get("status") == "ok":
-                found.append({**payload, "port": port})
-    return found
+        answers = await asyncio.gather(
+            *(probe(client, port) for port in range(base, base + max_tries))
+        )
+    return [answer for answer in answers if answer is not None]
 
 
 class HoudiniBridge:
@@ -79,9 +85,17 @@ class HoudiniBridge:
     """
 
     def __init__(self, host: str = "localhost", port: int = 8100, timeout: float = 60.0):
+        self.host = host
+        self.port = port
         self.base_url = f"http://{host}:{port}"
         self.timeout = timeout
         self._client: httpx.AsyncClient | None = None
+
+    async def retarget(self, port: int) -> None:
+        """Talk to the Houdini on ``port`` from now on (connect_houdini, start_houdini)."""
+        self.port = port
+        self.base_url = f"http://{self.host}:{port}"
+        await self._reset_client()
 
     @property
     def _api_url(self) -> str:

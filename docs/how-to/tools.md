@@ -2,7 +2,7 @@
 
 ## Overview
 
-fxhoudinimcp exposes **211 tools** across **23 categories**, covering every major Houdini context.
+fxhoudinimcp exposes **214 tools** across **24 categories**, covering every major Houdini context.
 
 Once connected, your AI assistant can:
 
@@ -45,6 +45,14 @@ Open, save, import/export, query scene information, inspect the Houdini
 connection status, and `undo` / `redo`. When `FXHOUDINIMCP_PROJECT_ROOT` is
 set, the file operations here are confined to that directory tree (see
 [Configuration](configuration.md#project-root-sandbox)).
+
+### Sessions (3 tools)
+
+`get_houdini_connection_status` lists every Houdini serving the plugin, the one
+in use marked current. `connect_houdini(port)` switches to another,
+`start_houdini` starts a headless hython (or, with `gui=True`, the application)
+and connects to it, and `stop_houdini` stops only a session this server
+started. A started Houdini holds a license seat until it is stopped.
 
 ### Node Operations (22 tools)
 

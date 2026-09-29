@@ -25,6 +25,7 @@ from fxhoudinimcp.tools import (
     parameters,  # noqa: F401
     rendering,  # noqa: F401
     scene,  # noqa: F401
+    session,  # noqa: F401
     shelf,  # noqa: F401
     takes,  # noqa: F401
     tops,  # noqa: F401
