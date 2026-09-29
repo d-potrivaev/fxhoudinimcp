@@ -1090,9 +1090,76 @@ def _element_count(geo: hou.Geometry, cls: str, element_getter: Any) -> int:
 
 def _get_attrib_stats(
     *,
-    node_path: str,
+    node_path: str | None = None,
     attribs: list[str] | str | None = None,
     attrib_class: str = "point",
+    frames: list | None = None,
+    node_paths: list[str] | None = None,
+    percentiles: list | None = None,
+) -> dict[str, Any]:
+    """The statistics below, for one node now, or for several nodes over several frames.
+
+    Counting particles at a handful of frames across several variants of a
+    setup took a set_frame plus a get_attrib_stats per node per frame, by the
+    hundred, or a loop in execute_python. *frames* and *node_paths* make
+    it one call: a row per node per frame, frames visited in increasing order
+    (a simulation cooks forward), and the current frame put back afterwards. A
+    node that fails is a row with its error, not a failed call. *percentiles*
+    (e.g. [5, 50, 95]) adds the distribution a median or a framing needs.
+    """
+    nodes = list(node_paths or ([] if node_path is None else [node_path]))
+    if not nodes:
+        raise ValueError("Pass node_path, or node_paths for several nodes.")
+    quantiles = _check_percentiles(percentiles)
+    if frames is None and len(nodes) == 1:
+        return _attrib_stats_once(nodes[0], attribs, attrib_class, quantiles)
+    wanted_frames = sorted({float(f) for f in frames}) if frames else [hou.frame()]
+    current = hou.frame()
+    rows: list[dict[str, Any]] = []
+    try:
+        for frame in wanted_frames:
+            hou.setFrame(frame)
+            for path in nodes:
+                try:
+                    row = _attrib_stats_once(path, attribs, attrib_class, quantiles)
+                except Exception as exc:
+                    row = {"node_path": path, "error": str(exc)}
+                row["frame"] = frame
+                rows.append(row)
+    finally:
+        hou.setFrame(current)
+    return {
+        "attrib_class": attrib_class,
+        "frames": wanted_frames,
+        "node_paths": nodes,
+        "rows": rows,
+        "frame_restored": current,
+    }
+
+
+def _check_percentiles(percentiles: list | None) -> list[float] | None:
+    if percentiles is None:
+        return None
+    values = [float(p) for p in percentiles]
+    if not values or any(p < 0 or p > 100 for p in values):
+        raise ValueError(f"percentiles must be numbers in 0..100, got {percentiles!r}")
+    return values
+
+
+def _python_percentile(values: list[float], q: float) -> float:
+    """Linear-interpolated percentile, numpy's default method."""
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * q / 100.0
+    low = int(position)
+    high = min(low + 1, len(ordered) - 1)
+    return ordered[low] + (ordered[high] - ordered[low]) * (position - low)
+
+
+def _attrib_stats_once(
+    node_path: str,
+    attribs: list[str] | str | None,
+    attrib_class: str,
+    percentiles: list[float] | None = None,
 ) -> dict[str, Any]:
     """Aggregate statistics for numeric attributes: min, max, mean, sum.
 
@@ -1151,7 +1218,7 @@ def _get_attrib_stats(
             continue
         size = attrib.size()
         kind = "Int" if attrib.dataType() == hou.attribData.Int else "Float"
-        fast = _numpy_stats(geo, cls, kind, name, size)
+        fast = _numpy_stats(geo, cls, kind, name, size, percentiles)
         if fast is not None:
             stats[name] = fast
             continue
@@ -1189,6 +1256,16 @@ def _get_attrib_stats(
                 }
                 for i in range(size)
             ]
+        if percentiles:
+            columns = [flat[i::size] for i in range(size)]
+            entry["percentiles"] = {
+                f"{q:g}": (
+                    _python_percentile(columns[0], q)
+                    if size == 1
+                    else [_python_percentile(column, q) for column in columns]
+                )
+                for q in percentiles
+            }
         stats[name] = entry
 
     return {
@@ -1201,7 +1278,9 @@ def _get_attrib_stats(
     }
 
 
-def _numpy_stats(geo, cls: str, kind: str, name: str, size: int) -> dict[str, Any] | None:
+def _numpy_stats(
+    geo, cls: str, kind: str, name: str, size: int, percentiles: list[float] | None = None
+) -> dict[str, Any] | None:
     """min/max/sum/mean (and per component) from the raw buffer, or None.
 
     The list-of-floats path built one Python float per component and walked
@@ -1239,6 +1318,12 @@ def _numpy_stats(geo, cls: str, kind: str, name: str, size: int) -> dict[str, An
             {"min": cast(lo), "max": cast(hi), "mean": float(mean)}
             for lo, hi, mean in zip(table.min(0), table.max(0), table.mean(0), strict=False)
         ]
+    if percentiles:
+        found = np.percentile(table, percentiles, axis=0)
+        entry["percentiles"] = {
+            f"{q:g}": float(row[0]) if size == 1 else [float(v) for v in row]
+            for q, row in zip(percentiles, found, strict=True)
+        }
     return entry
 
 

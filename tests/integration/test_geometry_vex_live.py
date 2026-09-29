@@ -210,6 +210,46 @@ class TestAttribStats:
         result = call("geometry.get_attrib_stats", node_path=wrangle.path(), attribs=["label"])
         assert result["stats"]["label"] == {"skipped": "not numeric"}
 
+    def test_several_nodes_over_several_frames_in_one_call(self, call, scattered):
+        timed = hou.node(scattered).createOutputNode("attribwrangle", "timed")
+        timed.parm("class").set(2)
+        timed.parm("snippet").set("@heat = @Frame;")
+        missing = scattered.rsplit("/", 1)[0] + "/nope"
+        hou.setFrame(5)
+        result = call(
+            "geometry.get_attrib_stats",
+            node_paths=[timed.path(), scattered, missing],
+            frames=[3, 1, 2],
+            attribs=["heat"],
+        )
+        assert result["frames"] == [1.0, 2.0, 3.0]
+        timed_rows = [row for row in result["rows"] if row["node_path"] == timed.path()]
+        assert [row["stats"]["heat"]["mean"] for row in timed_rows] == [1.0, 2.0, 3.0]
+        still = [row for row in result["rows"] if row["node_path"] == scattered]
+        assert all(row["stats"]["heat"]["max"] == 499.0 for row in still)
+        failed = [row for row in result["rows"] if row["node_path"] == missing]
+        assert len(failed) == 3 and all(row["error"] for row in failed)
+        assert hou.frame() == 5.0
+        assert result["frame_restored"] == 5.0
+
+    def test_percentiles_give_the_median(self, call, scattered):
+        result = call(
+            "geometry.get_attrib_stats",
+            node_path=scattered,
+            attribs=["heat", "vel"],
+            percentiles=[0, 50, 100],
+        )
+        heat = result["stats"]["heat"]["percentiles"]
+        assert heat["0"] == 0.0 and heat["100"] == 499.0
+        assert heat["50"] == pytest.approx(249.5)
+        assert result["stats"]["vel"]["percentiles"]["50"] == pytest.approx([249.5, -249.5, 1.0])
+
+    def test_a_percentile_outside_0_100_is_refused(self, call, scattered):
+        error = call(
+            "geometry.get_attrib_stats", expect_error=True, node_path=scattered, percentiles=[150]
+        )
+        assert "0..100" in error["message"]
+
 
 class TestVolumeInfo:
     """Per-volume identity, not just a primitive count."""
