@@ -116,9 +116,7 @@ class TestParameterWrites:
         source.parm = lambda name: parm if name == "impulserate" else None
         monkeypatch.setattr(parameters, "_resolve_node", lambda path: source)
         monkeypatch.setattr(parameters, "_resolve_parm", lambda path, name: parm)
-        monkeypatch.setattr(
-            parameters, "_write_parm", lambda p, value, override: {"new_value": value}
-        )
+        monkeypatch.setattr(parameters, "_write_parm", lambda p, value, *args: {"new_value": value})
         return source
 
     def test_set_parameter_names_the_simulation(self, written, pop_source):
@@ -135,7 +133,7 @@ class TestParameterWrites:
         assert result["simulation_cache"]["networks"] == [pop_source[0].path()]
 
     def test_a_batch_that_wrote_nothing_says_nothing(self, written, monkeypatch):
-        def refuse(parm, value, override):
+        def refuse(parm, value, *args):
             raise ValueError("locked")
 
         monkeypatch.setattr(parameters, "_write_parm", refuse)
@@ -147,7 +145,7 @@ class TestParameterWrites:
         parm = MagicMock()
         parm.node.return_value = box
         monkeypatch.setattr(parameters, "_resolve_parm", lambda path, name: parm)
-        monkeypatch.setattr(parameters, "_write_parm", lambda p, value, override: {"new_value": 1})
+        monkeypatch.setattr(parameters, "_write_parm", lambda p, value, *args: {"new_value": 1})
         assert "simulation_cache" not in parameters._set_parameter(box.path(), "sizex", 1)
 
 
@@ -229,7 +227,7 @@ def test_build_network_in_a_dop_network_names_it(monkeypatch, pop_source):
     monkeypatch.setattr(
         graph,
         "_parm_names_for_type",
-        lambda scratch, resolved, parm_types=None, factory_expressions=None: (
+        lambda scratch, resolved, **kwargs: (
             set(),
             set(),
             {},
