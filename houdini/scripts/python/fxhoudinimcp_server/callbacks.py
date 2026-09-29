@@ -56,11 +56,13 @@ def _is_python(parm: hou.Parm) -> bool:
 
 def _callback_kwargs(parm: hou.Parm, arguments: dict | None) -> dict[str, Any]:
     """The kwargs pressButton() gives a Python callback (measured on 22.0.429)."""
-    index, nesting = "-1", "0"
+    # multiParmInstanceIndices() gives the numbers in the parm name, outermost
+    # first: btn2_3 -> (2, 3), and pressButton() says index "3", index2 "2".
+    indices: tuple = ()
     with contextlib.suppress(Exception):
-        indices = parm.multiParmInstanceIndices()
-        if indices:
-            index, nesting = str(indices[-1]), str(len(indices))
+        indices = tuple(parm.multiParmInstanceIndices())
+    index = str(indices[-1]) if indices else "-1"
+    nesting = str(len(indices))
     kwargs: dict[str, Any] = {
         "node": parm.node(),
         "parm": parm,
@@ -69,6 +71,8 @@ def _callback_kwargs(parm: hou.Parm, arguments: dict | None) -> dict[str, Any]:
         "script_multiparm_index": index,
         "script_multiparm_nesting": nesting,
     }
+    for level, number in enumerate(reversed(indices[:-1]), 2):
+        kwargs[f"script_multiparm_index{level}"] = str(number)
     value = ""
     with contextlib.suppress(Exception):
         value = parm.evalAsString()

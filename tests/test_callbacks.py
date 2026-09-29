@@ -141,6 +141,7 @@ class TestPythonCallbackRunsAsPressButtonWould:
         parm.multiParmInstanceIndices = lambda: (2, 3)
         callbacks.press(parm)
         assert hou.session.seen["script_multiparm_index"] == "3"
+        assert hou.session.seen["script_multiparm_index2"] == "2"
         assert hou.session.seen["script_multiparm_nesting"] == "2"
 
     def test_a_raising_callback_is_a_callback_error(self, pwd):
