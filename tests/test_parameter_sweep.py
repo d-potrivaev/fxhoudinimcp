@@ -165,3 +165,54 @@ class TestGetParametersInsideANetwork:
         result = parameters._get_parameters("/mat/lib/a", patterns=["file"])
         assert result["parameters"]["file"]["raw_value"] == "$JOB/a.exr"
         assert "rows" not in result
+
+
+class TestDefaultBesideTheValue:
+    """include_defaults said "changed" without saying from what."""
+
+    def _with_default(self, parm, defaults, index=0, expressions=("",)):
+        parm.componentIndex.return_value = index
+        template = parm.parmTemplate.return_value
+        template.defaultValue.return_value = defaults
+        template.defaultExpression.return_value = expressions
+        return parm
+
+    def test_the_component_default_is_reported(self):
+        parm = self._with_default(_parm("ty", 2.5, kind="Float"), (0.0, 1.0, 0.0), index=1)
+        assert parameters._default_of(parm) == {"default": 1.0}
+
+    def test_a_default_expression_is_named(self):
+        parm = self._with_default(_parm("f1", 1, kind="Float"), (1.0,), expressions=("$FSTART",))
+        assert parameters._default_of(parm) == {"default": 1.0, "default_expression": "$FSTART"}
+
+    def test_a_single_string_expression_is_not_cut_to_one_character(self):
+        # A toggle or a menu answers one value and one expression string.
+        parm = self._with_default(_parm("enable", 1, kind="Toggle"), False, expressions="$F>1")
+        assert parameters._default_of(parm) == {"default": False, "default_expression": "$F>1"}
+
+    def test_a_template_without_a_default_answers_nothing(self):
+        parm = _parm("folder", 0, kind="Folder")
+        parm.parmTemplate.return_value.defaultValue.side_effect = AttributeError
+        assert parameters._default_of(parm) == {}
+
+    def test_a_single_node_reports_the_default_beside_the_value(self, monkeypatch):
+        parm = self._with_default(_parm("sizex", 7.5, kind="Float"), (1.0,))
+        node = _node("/obj/geo1/box1", "box", [parm])
+        monkeypatch.setattr(parameters.hou, "node", lambda path: node)
+        result = parameters._get_parameters("/obj/geo1/box1", include_defaults=True)
+        assert result["parameters"]["sizex"] == {
+            "value": 7.5,
+            "is_at_default": False,
+            "default": 1.0,
+        }
+        plain = parameters._get_parameters("/obj/geo1/box1")
+        assert "default" not in plain["parameters"]["sizex"]
+
+    def test_the_default_reaches_the_rows(self, monkeypatch):
+        image = _image("/mat/lib/a", "$JOB/a.exr")
+        self._with_default(image.parms.return_value[0], ("",))
+        _library(monkeypatch, [image])
+        result = parameters._get_parameters(
+            inside="/mat/lib", patterns=["file"], include_defaults=True
+        )
+        assert result["rows"][0]["default"] == ""
