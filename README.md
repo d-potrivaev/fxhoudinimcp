@@ -1,15 +1,14 @@
 <div align="center">
 
-  <img src="https://raw.githubusercontent.com/healkeiser/fxhoudinimcp/main/docs/images/banner.webp" alt="fxhoudinimcp: the MCP server for SideFX Houdini" width="100%">
+  <p align="center">
+    <img src="https://raw.githubusercontent.com/healkeiser/fxhoudinimcp/main/docs/images/banner.webp" alt="fxhoudinimcp: the MCP server for SideFX Houdini" width="100%">
+  </p>
 
   <p align="center">
     The most comprehensive MCP server for SideFX Houdini.
     <br/>
     208 tools across 23 categories, covering every major Houdini context.
-    <br/><br/>
   </p>
-
-  ##
 
   <p align="center">
     <!-- Maintenance status -->
@@ -25,9 +24,9 @@
     <a href="https://pypi.org/project/fxhoudinimcp/">
       <img src="https://img.shields.io/pypi/v/fxhoudinimcp?logo=pypi&logoColor=white&label=PyPI" alt="PyPI"/></a>&nbsp;&nbsp;
     <!-- PyPI downloads -->
-    <a href="https://pepy.tech/projects/fxhoudinimcp"><img src="https://static.pepy.tech/badge/fxhoudinimcp" alt="PyPI Downloads"></a> &nbsp;&nbsp;
+    <a href="https://pepy.tech/projects/fxhoudinimcp"><img src="https://static.pepy.tech/badge/fxhoudinimcp" alt="PyPI Downloads"></a>&nbsp;&nbsp;
     <!-- GitHub stars -->
-    <img src="https://img.shields.io/github/stars/healkeiser/fxhoudinimcp" alt="GitHub Stars"/>&nbsp;&nbsp;
+    <img src="https://img.shields.io/github/stars/healkeiser/fxhoudinimcp" alt="GitHub Stars"/>
   </p>
 
 </div>
