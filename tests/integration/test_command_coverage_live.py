@@ -473,6 +473,30 @@ class TestLopsModule:
             f"set_light_properties claimed intensity=5.0 but stage says {intensity}"
         )
 
+    def test_vector_values_given_as_lists_reach_the_stage(self, call):
+        """JSON has no tuples, and USD refuses a list for a color3f attribute."""
+        lopnet = call("nodes.create_node", parent_path="/obj", node_type="lopnet", name="vec")[
+            "node_path"
+        ]
+        light = call("lops.create_light", parent_path=lopnet, light_type="distant")
+        prim_path = light["prim_path"]
+
+        updated = call(
+            "lops.set_light_properties",
+            node_path=light["node_path"],
+            prim_path=prim_path,
+            properties={"color": [1.0, 0.5, 0.25]},
+        )
+
+        assert updated["success"], updated
+        color = call(
+            "lops.get_usd_attribute",
+            node_path=updated["python_node"],
+            prim_path=prim_path,
+            attr_name="inputs:color",
+        )
+        assert [round(c, 3) for c in color["value"]] == [1.0, 0.5, 0.25], color
+
 
 class TestMopUp:
     """Exercise the commands no other test reaches."""

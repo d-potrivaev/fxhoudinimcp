@@ -1147,13 +1147,20 @@ def _edit_attributes_after(node: hou.Node, node_name: str, prim_path: str, value
         f"prim = stage.GetPrimAtPath({prim_path!r})",
         "if not prim or not prim.IsValid():",
         f"    raise RuntimeError('Prim not found: ' + {prim_path!r})",
+        # JSON gives lists, but USD takes a tuple for a vector or matrix
+        # attribute (a list is refused as a vector<VtValue>) and a list for an
+        # array attribute (a tuple is refused there), so convert by type.
+        "def _usd_value(attr, v):",
+        "    if isinstance(v, list) and not attr.GetTypeName().isArray:",
+        "        return tuple(_usd_value(attr, x) for x in v)",
+        "    return v",
     ]
     for attr_name, value in values.items():
         lines += [
             f"attr = prim.GetAttribute({attr_name!r})",
             "if not attr or not attr.IsValid():",
             f"    raise RuntimeError('No attribute ' + {attr_name!r} + ' on ' + {prim_path!r})",
-            f"if not attr.Set({value!r}):",
+            f"if not attr.Set(_usd_value(attr, {value!r})):",
             f"    raise RuntimeError('USD refused the value for ' + {attr_name!r})",
         ]
     python_node = node.parent().createNode("pythonscript", node_name=node_name)
