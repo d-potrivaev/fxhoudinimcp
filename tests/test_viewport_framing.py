@@ -111,6 +111,7 @@ class _FakeViewport:
     def __init__(self, camera=None):
         self._camera = camera
         self.view = _FreeView()
+        self.prim = ""
         self.takes = True
         self.calls = []
 
@@ -119,6 +120,9 @@ class _FakeViewport:
 
     def camera(self):
         return self._camera
+
+    def cameraPath(self):
+        return self._camera.path() if self._camera is not None else self.prim
 
     def defaultCamera(self):
         return self.view
@@ -266,6 +270,13 @@ class TestFreeView:
         with pytest.raises(ValueError, match="looks through /obj/cam1"):
             viewport.set_viewport_direction("front", rotation=[0, 45, 0])
         assert houdini.calls == []  # not even the direction
+
+    def test_a_viewport_looking_through_a_usd_camera_is_refused(self, houdini):
+        # camera() is None for a prim; setDefaultCamera() unbound it (22.0.368).
+        houdini.prim = "/cameras/ucam"
+        with pytest.raises(ValueError, match="looks through /cameras/ucam"):
+            viewport.set_viewport_direction(rotation=[0, 90, 0])
+        assert houdini.calls == []
 
     @pytest.mark.parametrize(
         ("kwargs", "named"),

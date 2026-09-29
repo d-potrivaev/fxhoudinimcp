@@ -563,10 +563,13 @@ def set_viewport_direction(
     scene_viewer = _find_scene_viewer(pane_name)
     viewport = scene_viewer.curViewport()
     if free_view:
+        # A USD camera prim is no node: camera() is None there, and
+        # setDefaultCamera() unbound /cameras/ucam without a word (22.0.368).
         bound = viewport.camera()
-        if bound is not None:
+        looks_through = bound.path() if bound is not None else viewport.cameraPath()
+        if looks_through:
             raise ValueError(
-                f"The viewport looks through {bound.path()}: rotation/pivot/distance "
+                f"The viewport looks through {looks_through}: rotation/pivot/distance "
                 f"place the viewport's own view. Move the camera instead "
                 f"(set_object_transform), or unbind it first."
             )
