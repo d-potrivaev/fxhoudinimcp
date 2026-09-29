@@ -684,6 +684,39 @@ register_handler("scene.redo", redo)
 register_handler("scene.get_scene_info", get_scene_info)
 register_handler("scene.new_scene", new_scene)
 register_handler("scene.save_scene", save_scene)
+
+
+###### scene.write_snapshot
+
+
+def write_snapshot() -> dict:
+    """Write the session as it is now to a temp hip, leaving the session untouched.
+
+    hou.hipFile.save(path) renames the session to path. HScript mwrite -n
+    writes a copy: the session keeps its name and its unsaved-changes flag
+    (checked on 22.0.368), so Houdini still prompts before closing unsaved
+    work. For a separate hython to render the scene as the user sees it.
+    """
+    import tempfile
+    import time
+
+    folder = os.path.join(tempfile.gettempdir(), "fxhoudinimcp")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, f"snapshot_{time.time_ns() // 1_000_000}.hip").replace("\\", "/")
+    _, error = hou.hscript(f'mwrite -n "{path}"')
+    if error.strip() or not os.path.isfile(path):
+        raise hou.OperationFailed(
+            f"Could not write a snapshot to {path}: {error.strip() or 'no file'}"
+        )
+    return {
+        "snapshot": path,
+        "hip_file": hou.hipFile.path(),
+        "hip_dir": os.path.dirname(hou.hipFile.path()),
+        "houdini_version": hou.applicationVersionString(),
+    }
+
+
+register_handler("scene.write_snapshot", write_snapshot)
 register_handler("scene.load_scene", load_scene)
 register_handler("scene.import_file", import_file)
 register_handler("scene.export_file", export_file)

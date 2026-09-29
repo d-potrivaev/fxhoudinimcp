@@ -8,6 +8,10 @@ from __future__ import annotations
 
 # Built-in
 import asyncio
+import contextlib
+import json
+import os
+from pathlib import Path
 from typing import Any
 
 # Third-party
@@ -15,6 +19,7 @@ from fxhoudinimcp._sdk import Context
 
 # Internal
 from fxhoudinimcp.bridge import NO_TIMEOUT
+from fxhoudinimcp.houdini_discovery import find_all_hython, find_hython
 from fxhoudinimcp.server import _get_bridge, mcp
 from fxhoudinimcp.tools.viewport import capture_path
 
@@ -249,3 +254,89 @@ async def get_render_progress(ctx: Context, node_path: str) -> dict:
     """
     bridge = _get_bridge(ctx)
     return await bridge.execute("rendering.get_render_progress", {"node_path": node_path})
+
+
+def _hython_for(version: str | None):
+    """The installed hython of the running Houdini's build, else the default one."""
+    for hython in find_all_hython():
+        if version and version in str(hython):
+            return hython
+    return find_hython()
+
+
+@mcp.tool()
+async def render_sheet(
+    ctx: Context,
+    start: int,
+    end: int,
+    step: int = 1,
+    camera: str | None = None,
+    resolution: list[int] | None = None,
+    columns: int | None = None,
+    output_path: str | None = None,
+) -> dict:
+    """Render frames start..end with the OpenGL ROP and tile them into one image.
+
+    One image shows motion a single frame cannot: a sim's spread, a camera
+    move. Needs no viewport, so it works in a headless session too. A snapshot
+    of the scene as it is now (unsaved edits included, the session untouched)
+    renders in a separate hython, since a second OpenGL render in one hython
+    crashes on Houdini 22; that hython takes a license seat while it runs.
+    Frames are labelled. Objects (/obj) only, not a LOP stage.
+
+    Args:
+        start: First frame.
+        end: Last frame.
+        step: Frame step; at most 64 frames in all.
+        camera: Camera object path. Default: the scene's only camera.
+        resolution: [width, height] of each tile. Default [320, 240].
+        columns: Tiles per row. Default: about square.
+        output_path: Sheet image path. Default: a new PNG in the temp dir.
+    """
+    count = len(range(start, end + 1, max(1, step)))
+    if step < 1 or count < 1 or count > 64:
+        raise ValueError(f"start..end by step gives {count} frames; give 1 to 64 with step >= 1.")
+    bridge = _get_bridge(ctx)
+    snapshot = await bridge.execute("scene.write_snapshot")
+    hython = _hython_for(snapshot.get("houdini_version"))
+    if hython is None:
+        raise RuntimeError("No hython found to render the sheet. Set HYTHON.")
+    args = {
+        "hip": snapshot["snapshot"],
+        "hip_file": snapshot.get("hip_file"),
+        "camera": camera,
+        "start": start,
+        "end": end,
+        "step": step,
+        "resolution": resolution or [320, 240],
+        "columns": columns,
+        "output": capture_path(output_path, "sheet"),
+    }
+    child = Path(__file__).resolve().parent.parent / "sheet_child.py"
+    try:
+        process = await asyncio.create_subprocess_exec(
+            str(hython),
+            str(child),
+            json.dumps(args),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            out, _ = await asyncio.wait_for(process.communicate(), timeout=600)
+        except TimeoutError:
+            process.kill()
+            raise TimeoutError("The sheet's hython ran past 600 s and was stopped.") from None
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(snapshot["snapshot"])
+    text = out.decode("utf-8", errors="replace")
+    marker = next(
+        (line for line in reversed(text.splitlines()) if line.startswith("__MCP_RESULT__ ")), None
+    )
+    if marker is None:
+        tail = "\n".join(text.splitlines()[-15:])
+        raise RuntimeError(f"The sheet's hython exited with code {process.returncode}:\n{tail}")
+    result = json.loads(marker[len("__MCP_RESULT__ ") :])
+    if "error" in result:
+        raise ValueError(result["error"])
+    return {"success": True, "hip_file": snapshot.get("hip_file"), **result}

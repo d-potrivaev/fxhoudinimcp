@@ -95,6 +95,7 @@ NO_FAILURE_INPUT: dict[str, str] = {
     "rendering.list_render_nodes": "takes nothing; an empty /out is a valid answer",
     "scene.get_scene_info": "takes nothing; always describes the current scene",
     "scene.new_scene": "only an optional save flag",
+    "scene.write_snapshot": "takes nothing; an unwritable temp dir is the only failure, not input",
     "takes.get_current_take": "takes nothing; there is always a current take",
     "takes.list_takes": "takes nothing; the main take always exists",
 }

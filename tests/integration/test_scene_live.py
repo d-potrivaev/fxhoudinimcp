@@ -52,6 +52,22 @@ class TestFileRoundtrip:
         assert sops[0].geometry().intrinsicValue("pointcount") == 8
 
 
+class TestWriteSnapshot:
+    """A copy for another hython to render, with the session left as it was."""
+
+    def test_the_copy_holds_unsaved_work_and_the_session_keeps_its_name(self, call):
+        call("nodes.create_node", parent_path="/obj", node_type="geo", name="in_snapshot")
+        before = hou.hipFile.path()
+        result = call("scene.write_snapshot")
+        try:
+            assert hou.hipFile.path() == before
+            assert result["hip_file"] == before
+            with open(result["snapshot"], "rb") as fh:
+                assert b"in_snapshot" in fh.read()
+        finally:
+            os.remove(result["snapshot"])
+
+
 class TestExportFileTellsTheTruth:
     """export_file's Driver branch was the same false-success bug as start_render.
 

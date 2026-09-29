@@ -2,7 +2,7 @@
 
 ## Overview
 
-fxhoudinimcp exposes **214 tools** across **24 categories**, covering every major Houdini context.
+fxhoudinimcp exposes **215 tools** across **24 categories**, covering every major Houdini context.
 
 Once connected, your AI assistant can:
 
@@ -112,10 +112,13 @@ every installed version of an asset's type, and read or write their sections.
 
 Set keyframes, control the playbar, and manage frame and playback ranges.
 
-### Rendering (9 tools)
+### Rendering (10 tools)
 
 Viewport and quad-view capture, network editor rendering, render node
 management, render settings, launching and monitoring renders.
+`render_sheet` renders a frame range with the OpenGL ROP and tiles it into one
+labelled image, with no viewport: a snapshot of the scene as it is renders in a
+separate hython, which takes a license seat while it runs.
 
 ### VEX (5 tools)
 
