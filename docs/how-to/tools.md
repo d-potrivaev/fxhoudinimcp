@@ -2,7 +2,7 @@
 
 ## Overview
 
-fxhoudinimcp exposes **210 tools** across **23 categories**, covering every major Houdini context.
+fxhoudinimcp exposes **211 tools** across **23 categories**, covering every major Houdini context.
 
 Once connected, your AI assistant can:
 
@@ -74,10 +74,11 @@ above the threshold; `sample_volume` reads fields at positions or at another
 node's points, and `compare_volumes` totals one field per band of another
 (density inside a collider SDF).
 
-### LOPs/USD (20 tools)
+### LOPs/USD (21 tools)
 
 Stage inspection, USD prims and attributes, layers, composition arcs, variants,
-materials, lights and light rigs.
+materials, lights and light rigs. `get_usd_world_transform` reads prims' world
+transforms at several frames, recooking the stage at each.
 
 ### DOPs (8 tools)
 

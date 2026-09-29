@@ -43,7 +43,7 @@
 
 A comprehensive [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) server for [SideFX Houdini](https://www.sidefx.com/). Connects AI assistants like Claude directly to Houdini's Python API, enabling natural language control over scene building, simulation setup, rendering, and more.
 
-**210 tools**, **8 resources**, and **9 prompts** serving **31 written workflow guides** out of the box.
+**211 tools**, **8 resources**, and **9 prompts** serving **31 written workflow guides** out of the box.
 
 <!-- FEATURES -->
 ## Features
@@ -51,20 +51,20 @@ A comprehensive [MCP](https://modelcontextprotocol.io/) (Model Context Protocol)
 | Category | Tools | Description |
 |----------|-------|-------------|
 | **Graph Intelligence** | 6 | Atomic validated network building, network verification, node doc cards, cook profiling, frame-range cooking with per-frame evidence, cook status |
-| **Documentation** | 2 | Full-text search + page retrieval over Houdini's own shipped manual (version-exact) |
+| **Documentation** | 3 | Full-text search + page retrieval over Houdini's own shipped manual (version-exact) |
 | **Scene Management** | 10 | Open, save, import/export, scene info, connection status, undo/redo |
 | **Node Operations** | 22 | Create, delete, copy, connect, layout, flags, network boxes, sticky notes, object transforms |
-| **Parameters** | 12 | Get/set values in bulk, expressions, keyframes, spare parameters |
+| **Parameters** | 14 | Get/set values in bulk, expressions, keyframes, spare parameters |
 | **Geometry (SOPs)** | 16 | Points, prims, attributes, attribute statistics, volume statistics and sampling, groups, sampling, nearest-point search |
-| **LOPs/USD** | 18 | Stage inspection, prims, layers, composition, variants, lighting |
+| **LOPs/USD** | 21 | Stage inspection, prims, world transforms over frames, layers, composition, variants, lighting |
 | **DOPs** | 8 | Simulation info, DOP objects, step/reset, memory usage |
 | **PDG/TOPs** | 12 | Cook, work items, failed items and logs, schedulers, dependency graphs |
 | **COPs (Copernicus)** | 7 | Image nodes, layers, VDB data |
-| **HDAs** | 11 | Create, install, manage Digital Assets, their versions and sections |
+| **HDAs** | 13 | Create, install, manage Digital Assets, their versions and sections |
 | **Animation** | 9 | Keyframes, playbar control, frame range |
 | **Rendering** | 9 | Viewport capture, render nodes, settings, render launch |
 | **VEX** | 5 | Create/edit wrangles, validate VEX code |
-| **Code Execution** | 6 | Python, HScript, expressions, env variables, file references, update mode |
+| **Code Execution** | 7 | Python, HScript, expressions, env variables, file references, update mode |
 | **Viewport/UI** | 14 | Pane management, viewer context, verified camera and renderer state, screenshots, error detection |
 | **Scene Context** | 8 | Network overview, cook chain, selection, scene summary, error analysis |
 | **Workflows** | 8 | One-call Pyro/RBD/FLIP/Vellum setup, SOP chains, render config |
@@ -88,7 +88,7 @@ flowchart LR
 
     subgraph MCP[" ⚡ FXHoudini MCP Server "]
         direction TB
-        B1("🔧 210 tools")
+        B1("🔧 211 tools")
         B2("📦 8 Resources")
         B3("💬 9 Prompts")
     end
@@ -614,7 +614,7 @@ server's own bridge).
 
 1. **Houdini Plugin** (`houdini/`): Runs inside Houdini's Python environment. Registers `@hwebserver.apiFunction` endpoints that receive JSON commands. Uses `hdefereval.executeInMainThreadWithResult()` to safely execute `hou.*` calls on the main thread.
 
-2. **MCP Server** (`python/fxhoudinimcp/`): A standalone Python process using FastMCP. Exposes 210 tools, 8 resources, and 9 prompts via the MCP protocol. Forwards tool calls to Houdini over HTTP.
+2. **MCP Server** (`python/fxhoudinimcp/`): A standalone Python process using FastMCP. Exposes 211 tools, 8 resources, and 9 prompts via the MCP protocol. Forwards tool calls to Houdini over HTTP.
 
 3. **Bridge** (`python/fxhoudinimcp/bridge.py`): Async HTTP client that sends commands to Houdini's hwebserver and deserializes responses. Handles connection errors and timeouts.
 

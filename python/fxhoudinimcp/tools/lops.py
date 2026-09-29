@@ -234,6 +234,32 @@ async def get_usd_attributes(
 
 
 @mcp.tool()
+async def get_usd_world_transform(
+    ctx: Context,
+    node_path: str,
+    prim_paths: list[str],
+    frames: list[float] | None = None,
+) -> dict:
+    """World transform of USD prims at one or more frames.
+
+    get_usd_prim gives local xformOps; this composes every parent, so an
+    animated parent shows. Per prim and frame: translate, rotate (XYZ
+    degrees), scale and the row-major matrix. Each frame recooks the stage
+    there, so LOP-parm animation reads right, and the playbar is restored.
+
+    Args:
+        node_path: LOP node whose stage to read.
+        prim_paths: Prim paths, e.g. ["/world/cam"].
+        frames: Frames to read at, at most 500. Default: the current frame.
+    """
+    bridge = _get_bridge(ctx)
+    params: dict[str, Any] = {"node_path": node_path, "prim_paths": prim_paths}
+    if frames is not None:
+        params["frames"] = frames
+    return await bridge.execute("lops.get_usd_world_transform", params)
+
+
+@mcp.tool()
 async def get_usd_layers(ctx: Context, node_path: str) -> dict:
     """List all layers in a USD stage.
 

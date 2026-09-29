@@ -99,6 +99,7 @@
     "lops.get_usd_prim",
     "lops.get_usd_prim_stats",
     "lops.get_usd_variants",
+    "lops.get_usd_world_transform",
     "lops.inspect_usd_layer",
     "lops.list_lights",
     "lops.list_usd_prims",

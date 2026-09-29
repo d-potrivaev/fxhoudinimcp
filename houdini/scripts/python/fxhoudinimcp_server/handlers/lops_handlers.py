@@ -9,6 +9,7 @@ from __future__ import annotations
 # Built-in
 import contextlib
 import fnmatch
+import functools
 import itertools
 import re
 from typing import Any
@@ -20,6 +21,7 @@ import hou
 from fxhoudinimcp_server.config import layout_if_enabled, place_new_node
 from fxhoudinimcp_server.dispatcher import register_handler
 from fxhoudinimcp_server.handlers.node_handlers import _refuse_taken_name
+from fxhoudinimcp_server.outputs import at_frame
 
 # USD modules -- may not be available in all Houdini configurations
 try:
@@ -252,6 +254,29 @@ def _stage_frame() -> float | None:
     with contextlib.suppress(Exception):
         return float(hou.frame())
     return None
+
+
+def _cooked_at_time(handler):
+    """Run a stage read with the stage cooked at the requested *time*.
+
+    A LOP stage holds what its nodes authored at the frame they cooked on: an
+    Xform LOP with ty = $F carries one time sample, at the current frame. Read
+    at Usd.TimeCode(10) from frame 1, it answered ty = 1 under "time": 10.
+    The playbar goes to *time* for the read and back after; a stage whose
+    samples come from a file reads the same either way.
+    """
+
+    # wraps keeps the handler's signature visible: the dispatcher reads it to
+    # explain a bad argument, and a bare **kwargs answered every call alike.
+    @functools.wraps(handler)
+    def run(**kwargs):
+        time = kwargs.get("time")
+        if time is None or time == _stage_frame():
+            return handler(**kwargs)
+        with at_frame(float(time)):
+            return handler(**kwargs)
+
+    return run
 
 
 def _read_time(time: float | None) -> tuple[Any, float | None, str]:
@@ -533,7 +558,7 @@ def _get_usd_prim(
     }
 
 
-register_handler("lops.get_usd_prim", _get_usd_prim)
+register_handler("lops.get_usd_prim", _cooked_at_time(_get_usd_prim))
 
 
 ###### lops.list_usd_prims
@@ -724,7 +749,7 @@ def _get_usd_attribute(
     return reply
 
 
-register_handler("lops.get_usd_attribute", _get_usd_attribute)
+register_handler("lops.get_usd_attribute", _cooked_at_time(_get_usd_attribute))
 
 
 ###### lops.get_usd_attributes
@@ -856,7 +881,70 @@ def _get_usd_attributes(
     }
 
 
-register_handler("lops.get_usd_attributes", _get_usd_attributes)
+register_handler("lops.get_usd_attributes", _cooked_at_time(_get_usd_attributes))
+
+
+###### lops.get_usd_world_transform
+
+# A frame list longer than this is refused: each frame recooks the stage.
+_MAX_TRANSFORM_FRAMES = 500
+
+
+def _decompose(matrix) -> dict[str, Any]:
+    """Translate, rotate (XYZ degrees), scale and the row-major matrix of a Gf.Matrix4d."""
+    transform = Gf.Transform(matrix)
+    rotation = transform.GetRotation().Decompose(
+        Gf.Vec3d.XAxis(), Gf.Vec3d.YAxis(), Gf.Vec3d.ZAxis()
+    )
+    return {
+        "translate": list(transform.GetTranslation()),
+        "rotate": list(rotation),
+        "scale": list(transform.GetScale()),
+        "matrix": [list(matrix.GetRow(row)) for row in range(4)],
+    }
+
+
+def _get_usd_world_transform(
+    *,
+    node_path: str,
+    prim_paths: list[str] | str,
+    frames: list[float] | None = None,
+) -> dict[str, Any]:
+    """World transform of prims at one or more frames, the playbar restored after.
+
+    get_usd_prim gives the local xformOps, which say nothing about where a prim
+    ends up under an animated parent. Each frame recooks the stage there (see
+    _cooked_at_time), so LOP-authored animation reads right, not only samples
+    that came from a file.
+    """
+    if isinstance(prim_paths, str):
+        prim_paths = [prim_paths]
+    if not prim_paths:
+        raise ValueError("prim_paths must name at least one prim.")
+    wanted = [float(f) for f in frames] if frames else [_stage_frame()]
+    if len(wanted) > _MAX_TRANSFORM_FRAMES:
+        raise ValueError(
+            f"{len(wanted)} frames; at most {_MAX_TRANSFORM_FRAMES}, since each one recooks the stage."
+        )
+
+    results: dict[str, list[dict[str, Any]]] = {path: [] for path in prim_paths}
+    for frame in wanted:
+        with at_frame(frame if frame != _stage_frame() else None):
+            stage = _get_lop_stage(node_path)
+            time_code = Usd.TimeCode(frame) if frame is not None else Usd.TimeCode.Default()
+            cache = UsdGeom.XformCache(time_code)
+            for path in prim_paths:
+                prim = stage.GetPrimAtPath(path)
+                if not prim.IsValid():
+                    raise hou.OperationFailed(
+                        f"USD prim not found at '{path}' on stage from {node_path}"
+                    )
+                entry = {"frame": frame, **_decompose(cache.GetLocalToWorldTransform(prim))}
+                results[path].append(entry)
+    return {"node_path": node_path, "frames": wanted, "prims": results}
+
+
+register_handler("lops.get_usd_world_transform", _get_usd_world_transform)
 
 
 ###### lops.get_usd_layers
