@@ -1483,7 +1483,9 @@ def _default_of(parm: hou.Parm) -> dict[str, Any]:
                 expression = expressions
             else:
                 expression = expressions[index] if index < len(expressions) else ""
-            if expression:
+            # Built-in toggles answer their default as the token "on"/"off",
+            # which is the value spelt out, not an expression.
+            if expression and expression not in ("on", "off"):
                 found["default_expression"] = expression
     return found
 

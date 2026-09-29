@@ -190,6 +190,11 @@ class TestDefaultBesideTheValue:
         parm = self._with_default(_parm("enable", 1, kind="Toggle"), False, expressions="$F>1")
         assert parameters._default_of(parm) == {"default": False, "default_expression": "$F>1"}
 
+    def test_a_toggle_token_is_not_an_expression(self):
+        # box's rebar answers "off" from defaultExpression() on 22.0.368.
+        parm = self._with_default(_parm("rebar", 0, kind="Toggle"), False, expressions="off")
+        assert parameters._default_of(parm) == {"default": False}
+
     def test_a_template_without_a_default_answers_nothing(self):
         parm = _parm("folder", 0, kind="Folder")
         parm.parmTemplate.return_value.defaultValue.side_effect = AttributeError
