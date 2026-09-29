@@ -16,7 +16,13 @@ from typing import Any
 import hou
 
 # Internal
-from fxhoudinimcp_server.callbacks import CallbackError, press
+from fxhoudinimcp_server.callbacks import (
+    CallbackError,
+    action_script,
+    callback_script,
+    press,
+    run_action,
+)
 from fxhoudinimcp_server.config import (
     auto_layout_enabled,
     layout_if_enabled,
@@ -942,6 +948,7 @@ def press_button(
     parm_name: str,
     arguments: dict | None = None,
     cook: bool = False,
+    action: bool = False,
 ) -> dict:
     """Press a button parameter and report what the node says afterwards.
 
@@ -959,12 +966,19 @@ def press_button(
     after the press so they describe the result; without it `needs_cook`
     says whether they are stale (a cook that failed leaves it True too).
 
+    A parameter that is not a button and has no callback is refused:
+    pressButton() on it does nothing. The small action button beside a
+    field ("Create spare parameters" on a VEXpression) is the parm's
+    ``script_action`` tag, not its callback; ``action=True`` runs it.
+
     Args:
         node_path: Node that owns the button.
         parm_name: The button parameter's name.
         arguments: Optional kwargs handed to the callback script; values
             must be int, bool, float or str.
         cook: Cook the node after the press (default False).
+        action: Run the parm's action button (``script_action``) instead of
+            its callback (default False).
     """
     node = _get_node(node_path)
     parm = node.parm(parm_name)
@@ -984,11 +998,40 @@ def press_button(
             )
     template = parm.parmTemplate()
     parm_type = template.type().name()
+    action_code = action_script(parm)
+    action_help = ""
+    with contextlib.suppress(Exception):
+        help_tag = template.tags().get("script_action_help")
+        if isinstance(help_tag, str):
+            action_help = help_tag
+    if action and not action_code:
+        raise ValueError(
+            f"{node.path()}/{parm_name} has no action button (no script_action tag). "
+            f"Nothing was run."
+        )
+    if not action and parm_type != "Button" and not callback_script(parm):
+        # pressButton() on it returns without doing anything, which used to
+        # come back as success.
+        message = (
+            f"{node.path()}/{parm_name} is a {parm_type} parameter with no callback: "
+            f"pressing it does nothing. Nothing was run."
+        )
+        if action_code:
+            message += (
+                f" Its action button ({action_help or 'script_action'}) runs with "
+                f"action=True; an action that opens a picker or a dialog holds the "
+                f"bridge until it is closed."
+            )
+        raise ValueError(message)
     started = time.perf_counter()
     try:
-        # Not parm.pressButton() for a Python callback: one that raises opens
-        # Houdini's modal error window and holds the main thread.
-        route = press(parm, dict(arguments) if arguments else None)
+        if action:
+            run_action(parm, dict(arguments) if arguments else None)
+            route = "action"
+        else:
+            # Not parm.pressButton() for a Python callback: one that raises
+            # opens Houdini's modal error window and holds the main thread.
+            route = press(parm, dict(arguments) if arguments else None)
     except CallbackError as exc:
         raise ValueError(str(exc)) from exc
     except Exception as exc:
@@ -1003,9 +1046,12 @@ def press_button(
         "parm_type": parm_type,
         "duration_ms": duration_ms,
         "cooked": False,
-        # python: the callback script ran here; hscript / native: pressButton().
+        # python: the callback script ran here; hscript / native: pressButton();
+        # action: the parm's script_action ran here.
         "callback_route": route,
     }
+    if action and action_help:
+        result["action_help"] = action_help
     if cook:
         # A failed cook is an answer, not a failure of the press: its
         # messages land in errors() below.
@@ -1023,7 +1069,7 @@ def press_button(
         # Built-in buttons (File's Reload, Stash's Stash Input) are handled in
         # C++ and have no script callback; False does not mean inert.
         result["has_script_callback"] = bool(template.scriptCallback())
-    if parm_type != "Button":
+    if parm_type != "Button" and not action:
         result["note"] = (
             f"'{parm_name}' is a {parm_type} parameter, not a Button; its callback "
             f"script (if any) was triggered the way pressButton does for any parameter."

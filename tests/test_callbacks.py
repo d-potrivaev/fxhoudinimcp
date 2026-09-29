@@ -178,6 +178,46 @@ class TestPythonCallbackRunsAsPressButtonWould:
         assert pwd["pwd"] == "ROOT"
 
 
+class _ActionParm(_Parm):
+    """A field with no callback and an action button beside it (tag script_action)."""
+
+    def __init__(self, action, **kwargs):
+        super().__init__(script="", **kwargs)
+        self._tags = {"script_action": action}
+
+    def parmTemplate(self):  # noqa: N802 -- HOM spelling
+        template = super().parmTemplate()
+        template.tags.return_value = self._tags
+        return template
+
+
+class TestActionButton:
+    def test_the_action_script_runs_here_with_node_parmtuple_and_modifiers(self, monkeypatch, pwd):
+        monkeypatch.setattr(hou, "session", MagicMock(), raising=False)
+        parm = _ActionParm("hou.session.seen = (dict(kwargs), hou.pwd())", name="snippet")
+        callbacks.run_action(parm, {"extra": 5})
+        seen, during = hou.session.seen
+        assert seen["node"] is parm.node_
+        assert seen["parmtuple"] == [parm]
+        assert (seen["shift"], seen["ctrl"], seen["alt"], seen["cmd"]) == (False,) * 4
+        assert seen["extra"] == 5
+        assert during is parm.node_
+        assert parm.pressed == []  # pressButton() does not run a script_action
+        assert pwd["pwd"] == "ROOT"
+
+    def test_a_raising_action_is_a_callback_error(self, pwd):
+        parm = _ActionParm("raise ValueError('no ch() calls')")
+        with pytest.raises(callbacks.CallbackError, match="raised ValueError: no ch"):
+            callbacks.run_action(parm)
+
+    def test_no_tag_or_a_non_string_reads_as_no_action(self):
+        assert callbacks.action_script(_ActionParm(None)) == ""
+        parm = _Parm()
+        parm.parmTemplate = MagicMock()  # tags() answers a mock, not a dict of str
+        assert callbacks.action_script(parm) == ""
+        assert callbacks.action_script(_ActionParm("pass")) == "pass"
+
+
 class TestHandlersPressThroughCallbacks:
     """A raising Save to Disk / Build Hierarchy is a reply, not a modal window."""
 

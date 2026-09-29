@@ -288,6 +288,7 @@ async def press_button(
     parm_name: str,
     arguments: dict[str, Any] | None = None,
     cook: bool = False,
+    action: bool = False,
 ) -> dict:
     """Press a button parameter — "Stash Input", "Reload Geometry", an
     asset's own Build button — and read the node's errors and warnings
@@ -307,12 +308,19 @@ async def press_button(
     they are stale (a cook that failed leaves it True too). `has_script_callback` is False for built-in buttons that still
     do work (File's Reload, Stash's Stash Input).
 
+    A parm that is not a button and has no callback is refused: pressing it
+    does nothing. The small action button beside a field ("Create spare
+    parameters" on a VEXpression) runs with action=True; an action that
+    opens a picker holds the bridge like a dialog does.
+
     Args:
         node_path: Node that owns the button.
         parm_name: The button parameter's name.
         arguments: Optional kwargs handed to the callback script; values
             must be int, bool, float or str.
         cook: Cook the node after the press so errors describe the result.
+        action: Run the parm's action button (script_action) instead of its
+            callback.
     """
     bridge = _get_bridge(ctx)
     payload: dict[str, Any] = {"node_path": node_path, "parm_name": parm_name}
@@ -320,6 +328,8 @@ async def press_button(
         payload["arguments"] = arguments
     if cook:
         payload["cook"] = True
+    if action:
+        payload["action"] = True
     return await bridge.execute("nodes.press_button", payload, timeout=NO_TIMEOUT)
 
 
