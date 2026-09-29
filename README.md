@@ -234,7 +234,7 @@ On Windows, OneDrive can make a desktop-launched and a shell-launched Houdini re
 <!-- USAGE -->
 ## Usage
 
-The plugin starts with Houdini's UI (`FXHOUDINIMCP_AUTOSTART`), and the **MCP** menu starts, stops and checks it. **MCP > Connect a Client...** copies the `claude mcp add` line for the port this session actually got: a second Houdini takes the next free port.
+The plugin starts with Houdini's UI (`FXHOUDINIMCP_AUTOSTART`), and the **MCP** menu starts, stops and checks it. **MCP > Connect a Client...** shows the port this session actually got (a second Houdini takes the next free port), copies the command that registers the server with every client found, and lists the manual form for each client.
 
 Then ask for things:
 
