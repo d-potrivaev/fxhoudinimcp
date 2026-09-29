@@ -1295,35 +1295,327 @@ def _volume_entry(prim: Any) -> dict[str, Any]:
     return entry
 
 
-def _get_volume_info(*, node_path: str, max_volumes: int = 24) -> dict[str, Any]:
+def _volume_prims(geo: hou.Geometry) -> list:
+    """Volume and VDB primitives of ``geo``, in primitive order."""
+    # primsOfType, not a walk over geo.prims(): that built a Python object per
+    # prim to find none, 983 ms on a 1M-prim mesh, and cook_frame_range asked
+    # on every frame.
+    try:
+        return sorted(
+            list(geo.primsOfType(hou.primType.Volume)) + list(geo.primsOfType(hou.primType.VDB)),
+            key=lambda prim: prim.number(),
+        )
+    except Exception:
+        return [
+            prim
+            for prim in geo.prims()
+            if isinstance(prim, (hou.Volume, hou.VDB)) or type(prim).__name__ in ("Volume", "VDB")
+        ]
+
+
+def _volume_name(prim: Any) -> str:
+    try:
+        return prim.attribValue("name") or ""
+    except Exception:
+        return ""
+
+
+def _named_volume(geo: hou.Geometry, name: str, node_path: str) -> Any:
+    """The first volume called ``name``, or an error listing the names there are."""
+    prims = _volume_prims(geo)
+    for prim in prims:
+        if _volume_name(prim) == name:
+            return prim
+    have = sorted({_volume_name(prim) for prim in prims} - {""})
+    raise ValueError(
+        f"No volume named '{name}' on {node_path}. It has: {', '.join(have) or 'no named volumes'}."
+    )
+
+
+# Past this many voxels a read is refused rather than stalling the session:
+# a VDB comes back as a Python tuple, about 180 ms per 8M voxels.
+_MAX_VOXELS_READ = 64_000_000
+
+
+def _voxel_array(prim: Any):
+    """A volume's voxels as a float numpy array indexed [z, y, x], and its index origin.
+
+    A VDB gives only its active region, and its bounding box maxvec is
+    exclusive, so the shape is max - min (a box from 5 to 16 holds 11 voxels
+    per axis, checked on Houdini 22.0).
+    """
+    import numpy as np
+
+    if isinstance(prim, hou.VDB) or type(prim).__name__ == "VDB":
+        box = prim.activeVoxelBoundingBox()
+        low, high = box.minvec(), box.maxvec()
+        shape = [int(round(high[axis] - low[axis])) for axis in range(3)]
+        origin = [int(round(low[axis])) for axis in range(3)]
+        count = shape[0] * shape[1] * shape[2]
+        if count <= 0:
+            return np.zeros((0, 0, 0)), origin
+        if count > _MAX_VOXELS_READ:
+            raise ValueError(
+                f"{count} active voxels is more than the {_MAX_VOXELS_READ} this reads. "
+                "Call get_volume_info without threshold/bins for the intrinsics."
+            )
+        values = np.asarray(prim.voxelRangeAsFloat(box), dtype=np.float64)
+    else:
+        shape = list(prim.resolution())
+        origin = [0, 0, 0]
+        if shape[0] * shape[1] * shape[2] > _MAX_VOXELS_READ:
+            raise ValueError(
+                f"A {shape} grid is more than the {_MAX_VOXELS_READ} voxels this reads. "
+                "Call get_volume_info without threshold/bins for the intrinsics."
+            )
+        # The byte string is about 6x faster than allVoxels() on an 8M grid.
+        values = np.frombuffer(prim.allVoxelsAsString(), dtype=np.float32).astype(np.float64)
+    if values.size != shape[0] * shape[1] * shape[2]:
+        raise ValueError(
+            f"Houdini gave {values.size} voxels for a {shape} region, so the array has no "
+            "shape. Use sample_volume to read it at positions."
+        )
+    return values.reshape(shape[2], shape[1], shape[0]), origin
+
+
+_PERCENTILES = (1, 5, 25, 50, 75, 95, 99)
+
+
+def _edges(bins: Any):
+    """A bin count, or a list of edges the caller chose (SDF bands, say)."""
+    return [float(edge) for edge in bins] if isinstance(bins, (list, tuple)) else int(bins)
+
+
+def _value_summary(values, bins: Any = 0, threshold: float | None = None) -> dict[str, Any]:
+    """Count, extremes, mean, sum, percentiles; on request a histogram and a threshold split."""
+    import numpy as np
+
+    values = np.asarray(values, dtype=np.float64).ravel()
+    if not values.size:
+        return {"count": 0}
+    report: dict[str, Any] = {
+        "count": int(values.size),
+        "min": float(values.min()),
+        "max": float(values.max()),
+        "mean": float(values.mean()),
+        "sum": float(values.sum()),
+        "percentiles": {
+            str(share): float(value)
+            for share, value in zip(_PERCENTILES, np.percentile(values, _PERCENTILES), strict=True)
+        },
+    }
+    if bins:
+        counts, edges = np.histogram(values, bins=_edges(bins))
+        report["histogram"] = [
+            {"from": float(edges[i]), "to": float(edges[i + 1]), "count": int(n)}
+            for i, n in enumerate(counts)
+        ]
+    if threshold is not None:
+        above = int((values > threshold).sum())
+        report["threshold"] = {
+            "value": threshold,
+            "above": above,
+            "at_or_below": int(values.size) - above,
+            "share_above": round(above / values.size, 4),
+        }
+    return report
+
+
+def _box_above(prim: Any, array, origin: list[int], threshold: float) -> dict[str, Any] | None:
+    """World box of the voxels over ``threshold``: where the smoke is, not where the grid is."""
+    import numpy as np
+
+    found = np.argwhere(array > threshold)
+    if not len(found):
+        return None
+    corners = []
+    for corner in (found.min(axis=0), found.max(axis=0)):
+        z, y, x = (int(value) for value in corner)
+        corners.append(list(prim.indexToPos((x + origin[0], y + origin[1], z + origin[2]))))
+    return {
+        "min": [min(a, b) for a, b in zip(*corners, strict=True)],
+        "max": [max(a, b) for a, b in zip(*corners, strict=True)],
+        "note": "Voxel centres; widen by half a voxel for the cell edges.",
+    }
+
+
+def _get_volume_info(
+    *,
+    node_path: str,
+    max_volumes: int = 24,
+    threshold: float | None = None,
+    bins: Any = 0,
+) -> dict[str, Any]:
     """Per-volume names, resolution, active voxels and value ranges.
 
     get_geometry_info reports a primitive count, which cannot distinguish a
     correctly named non-empty density field from an empty one. get_cop_vdb
     covers Copernicus; this is the SOP side of the same question.
+
+    Without threshold or bins only intrinsics are read. With either, the voxels
+    are read once per volume for percentiles, a histogram, the split at the
+    threshold and the world box of the voxels over it.
     """
     geo = _get_sop_geo(node_path)
-    # primsOfType, not a walk over geo.prims(): that built a Python object per
-    # prim to find none, 983 ms on a 1M-prim mesh, and cook_frame_range asked
-    # on every frame.
-    try:
-        volumes = sorted(
-            list(geo.primsOfType(hou.primType.Volume)) + list(geo.primsOfType(hou.primType.VDB)),
-            key=lambda prim: prim.number(),
-        )
-    except Exception:
-        volumes = [
-            prim
-            for prim in geo.prims()
-            if isinstance(prim, (hou.Volume, hou.VDB)) or type(prim).__name__ in ("Volume", "VDB")
-        ]
+    volumes = _volume_prims(geo)
     shown = volumes[:max_volumes]
+    entries = []
+    for prim in shown:
+        entry = _volume_entry(prim)
+        voxels = entry.get("active_voxels", entry.get("total_voxels"))
+        if "mean_value" in entry and voxels is not None:
+            # Free: the mean intrinsic is sum / voxels. On a VDB both count
+            # active voxels only, which for fog is the whole field.
+            entry["sum"] = entry["mean_value"] * voxels
+        if threshold is not None or bins:
+            array, origin = _voxel_array(prim)
+            entry["voxel_stats"] = _value_summary(array, bins, threshold)
+            if threshold is not None and array.size:
+                entry["box_above_threshold"] = _box_above(prim, array, origin, threshold)
+        entries.append(entry)
     return {
         "node_path": node_path,
         "volume_count": len(volumes),
-        "volumes": [_volume_entry(prim) for prim in shown],
+        "volumes": entries,
         "truncated": len(volumes) > len(shown),
     }
 
 
 register_handler("geometry.get_volume_info", _get_volume_info)
+
+
+###### geometry.sample_volume
+
+
+def _points_at(positions: list) -> hou.Geometry:
+    points = hou.Geometry()
+    points.createPoints([hou.Vector3(*position) for position in positions])
+    return points
+
+
+def _read_fields_at(geo: hou.Geometry, fields: list[str], points: hou.Geometry) -> dict:
+    """Each field's value at each point, sampled in compiled code by the attribfromvolume verb."""
+    import numpy as np
+
+    verb = hou.sopNodeTypeCategory().nodeVerb("attribfromvolume")
+    found = {}
+    for field in fields:
+        verb.setParms({"field": field, "name": "__mcp_sample", "type": 0, "size": 1})
+        result = hou.Geometry()
+        verb.execute(result, [points, geo])
+        found[field] = np.asarray(result.pointFloatAttribValues("__mcp_sample"), dtype=np.float64)
+    return found
+
+
+def _sample_volume(
+    *,
+    node_path: str,
+    fields: list[str],
+    positions: list | None = None,
+    from_node: str | None = None,
+    limit: int = 1000,
+    bins: Any = 0,
+    threshold: float | None = None,
+) -> dict[str, Any]:
+    """Named volumes read at world positions, or at another node's points."""
+    geo = _get_sop_geo(node_path)
+    for field in fields:
+        _named_volume(geo, field, node_path)
+    if from_node:
+        points = _get_sop_geo(from_node)
+    elif positions:
+        points = _points_at(positions)
+    else:
+        raise ValueError(
+            "Give positions ([[x, y, z], ...]) or from_node (a SOP whose points to read at)."
+        )
+    read = _read_fields_at(geo, fields, points)
+    count = len(next(iter(read.values()))) if read else 0
+    report: dict[str, Any] = {
+        "node_path": node_path,
+        "positions": count,
+        "summary": {
+            field: _value_summary(values, bins, threshold) for field, values in read.items()
+        },
+    }
+    if count <= limit:
+        report["values"] = {field: values.tolist() for field, values in read.items()}
+    else:
+        report["note"] = f"{count} positions: summary only. Raise limit for the values."
+    return report
+
+
+register_handler("geometry.sample_volume", _sample_volume)
+
+
+###### geometry.compare_volumes
+
+
+def _grid_positions(prim: Any, most: int = 30000) -> list:
+    """Voxel-centred world positions over a volume's box, coarsened until under ``most``."""
+    box = prim.boundingBox()
+    size, low = box.sizevec(), box.minvec()
+    voxel = prim.intrinsicValue("voxelsize")
+    step = float(min(voxel)) if isinstance(voxel, (tuple, list)) else float(voxel)
+    if step <= 0:
+        step = max(size) / 32 or 1.0
+    while (size[0] / step) * (size[1] / step) * (size[2] / step) > most:
+        step *= 2
+    counts = [max(1, int(size[axis] / step)) for axis in range(3)]
+    return [
+        [low[0] + (i + 0.5) * step, low[1] + (j + 0.5) * step, low[2] + (k + 0.5) * step]
+        for i in range(counts[0])
+        for j in range(counts[1])
+        for k in range(counts[2])
+    ]
+
+
+def _compare_volumes(
+    *,
+    node_path: str,
+    field: str,
+    against: str,
+    against_node: str | None = None,
+    bands: Any = 10,
+) -> dict[str, Any]:
+    """How much of ``field`` sits where ``against`` is in each band.
+
+    "How much density is inside the collider", with the collider an SDF, is
+    bands=[-1e9, 0, 1e9] and the total in the first band. Both fields are
+    sampled in world space on a grid over the first one's box, so a Volume and
+    a VDB compare the same way.
+    """
+    import numpy as np
+
+    geo = _get_sop_geo(node_path)
+    prim = _named_volume(geo, field, node_path)
+    other = _get_sop_geo(against_node) if against_node else geo
+    _named_volume(other, against, against_node or node_path)
+
+    points = _points_at(_grid_positions(prim))
+    here = _read_fields_at(geo, [field], points)[field]
+    there = _read_fields_at(other, [against], points)[against]
+    if not here.size:
+        return {"node_path": node_path, "field": field, "against": against, "samples": 0}
+    counts, edges = np.histogram(there, bins=_edges(bands))
+    totals, _ = np.histogram(there, bins=edges, weights=here)
+    return {
+        "node_path": node_path,
+        "field": field,
+        "against": against,
+        "samples": int(here.size),
+        "field_total": float(here.sum()),
+        "bands": [
+            {
+                "from": float(edges[i]),
+                "to": float(edges[i + 1]),
+                "samples": int(counts[i]),
+                "field_total": float(totals[i]),
+            }
+            for i in range(len(counts))
+        ],
+        "note": "Totals sum sampled values, not integrals: compare bands, not absolute amounts.",
+    }
+
+
+register_handler("geometry.compare_volumes", _compare_volumes)

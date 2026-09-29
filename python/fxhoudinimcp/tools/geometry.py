@@ -373,19 +373,102 @@ async def get_volume_info(
     ctx: Context,
     node_path: str,
     max_volumes: int = 24,
+    threshold: float | None = None,
+    bins: int | list[float] = 0,
 ) -> dict:
-    """Per-volume name, resolution, active voxel count and value range.
+    """Per-volume name, resolution, active voxels, value range, mean and sum.
 
     A primitive count cannot tell a correctly named non-empty density field from
     an empty one, which is the question worth asking before wiring a solver's
     sourcing. This is the SOP counterpart of get_cop_vdb.
 
+    threshold or bins read the voxels (VDB: active ones) for percentiles, a
+    histogram, the count over threshold and box_above_threshold, the world box
+    of the voxels over it: where the smoke is, not where the grid is.
+
     Args:
         node_path: SOP node path holding volume or VDB primitives.
         max_volumes: Cap on volumes reported.
+        threshold: Split the voxels at this value and box the ones above it.
+        bins: Histogram bin count, or a list of bin edges.
     """
     bridge = _get_bridge(ctx)
-    return await bridge.execute(
-        "geometry.get_volume_info",
-        {"node_path": node_path, "max_volumes": max_volumes},
-    )
+    params: dict[str, Any] = {"node_path": node_path, "max_volumes": max_volumes}
+    if threshold is not None:
+        params["threshold"] = threshold
+    if bins:
+        params["bins"] = bins
+    return await bridge.execute("geometry.get_volume_info", params)
+
+
+@mcp.tool()
+async def sample_volume(
+    ctx: Context,
+    node_path: str,
+    fields: list[str],
+    positions: list[list[float]] | None = None,
+    from_node: str | None = None,
+    limit: int = 1000,
+    bins: int | list[float] = 0,
+    threshold: float | None = None,
+) -> dict:
+    """Read named volume fields at world positions, or at another SOP's points.
+
+    "What does the collision SDF read where the particles are" is one call
+    with from_node, and adds no node to the scene. A VDB SDF reads its
+    background (the band width) outside its narrow band, not the distance.
+
+    Args:
+        node_path: SOP holding the volumes.
+        fields: Volume names (the name attribute), e.g. ["density"].
+        positions: [[x, y, z], ...] in world space.
+        from_node: SOP whose points are the positions, instead of positions.
+        limit: Values are returned up to this many positions; the summary always is.
+        bins: Histogram bin count, or a list of bin edges, for the summary.
+        threshold: Count the samples above this value.
+    """
+    bridge = _get_bridge(ctx)
+    params: dict[str, Any] = {"node_path": node_path, "fields": fields, "limit": limit}
+    if positions is not None:
+        params["positions"] = positions
+    if from_node is not None:
+        params["from_node"] = from_node
+    if bins:
+        params["bins"] = bins
+    if threshold is not None:
+        params["threshold"] = threshold
+    return await bridge.execute("geometry.sample_volume", params)
+
+
+@mcp.tool()
+async def compare_volumes(
+    ctx: Context,
+    node_path: str,
+    field: str,
+    against: str,
+    against_node: str | None = None,
+    bands: int | list[float] = 10,
+) -> dict:
+    """How much of one field sits in each band of another field.
+
+    "How much density is inside the collider" is field="density",
+    against="surface" (an SDF), bands=[-1000, 0, 1000]: the first band's
+    field_total is what is inside. Both are sampled on a grid over field's box.
+
+    Args:
+        node_path: SOP holding field.
+        field: Volume to total, e.g. "density".
+        against: Volume whose value picks the band, e.g. a collider SDF.
+        against_node: SOP holding against, when not node_path.
+        bands: Band count, or a list of band edges.
+    """
+    bridge = _get_bridge(ctx)
+    params: dict[str, Any] = {
+        "node_path": node_path,
+        "field": field,
+        "against": against,
+        "bands": bands,
+    }
+    if against_node is not None:
+        params["against_node"] = against_node
+    return await bridge.execute("geometry.compare_volumes", params)

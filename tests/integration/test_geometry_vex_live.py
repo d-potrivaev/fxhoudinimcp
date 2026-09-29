@@ -253,3 +253,98 @@ class TestVolumeInfo:
         result = call("geometry.get_volume_info", node_path=box.path())
         assert result["volume_count"] == 0
         assert result["volumes"] == []
+
+
+class TestVolumeMeasurements:
+    """Sum, threshold box, sampling and comparison, on known geometry.
+
+    A 1-unit box centred on x=1 as a filled fog VDB and a dense iso volume,
+    and a 0.3 sphere SDF at the same centre as the collider.
+    """
+
+    @pytest.fixture
+    def scene(self, call) -> str:
+        geo = call("nodes.create_node", parent_path="/obj", node_type="geo")["node_path"]
+        built = call(
+            "graph.build_network",
+            parent_path=geo,
+            nodes=[
+                {"type": "box", "name": "box1", "parms": {"t": [1, 0, 0]}},
+                {
+                    "type": "vdbfrompolygons",
+                    "name": "fog",
+                    "inputs": ["box1"],
+                    "parms": {"builddistance": 0, "buildfog": 1, "fillinterior": 1},
+                },
+                {"type": "isooffset", "name": "dense", "inputs": ["box1"]},
+                {
+                    "type": "sphere",
+                    "name": "ball",
+                    "parms": {"t": [1, 0, 0], "rad": [0.3, 0.3, 0.3], "type": "polymesh"},
+                },
+                {
+                    "type": "vdbfrompolygons",
+                    "name": "collider",
+                    "inputs": ["ball"],
+                    "parms": {"voxelsize": 0.05, "fillinterior": 1},
+                },
+            ],
+        )
+        assert built["valid"], built
+        return geo
+
+    def test_sum_is_given_without_reading_voxels(self, call, scene):
+        entry = call("geometry.get_volume_info", node_path=f"{scene}/fog")["volumes"][0]
+        assert "voxel_stats" not in entry
+        assert entry["sum"] == pytest.approx(entry["mean_value"] * entry["active_voxels"])
+
+    @pytest.mark.parametrize("node", ["fog", "dense"])
+    def test_threshold_box_is_where_the_box_is(self, call, scene, node):
+        entry = call(
+            "geometry.get_volume_info", node_path=f"{scene}/{node}", threshold=0.5, bins=4
+        )["volumes"][0]
+        stats = entry["voxel_stats"]
+        assert stats["sum"] == pytest.approx(entry["sum"], rel=1e-4)
+        assert sum(b["count"] for b in stats["histogram"]) == stats["count"]
+        box = entry["box_above_threshold"]
+        # Centred on x=1 and inside the unit box: a swapped axis or a dropped
+        # VDB index origin puts it elsewhere.
+        assert (box["min"][0] + box["max"][0]) / 2 == pytest.approx(1.0, abs=0.06)
+        assert box["min"][0] >= 0.45 and box["max"][0] <= 1.55
+        assert abs(box["min"][1]) <= 0.55 and abs(box["max"][2]) <= 0.55
+
+    def test_sample_reads_inside_and_outside(self, call, scene):
+        result = call(
+            "geometry.sample_volume",
+            node_path=f"{scene}/fog",
+            fields=["density"],
+            positions=[[1, 0, 0], [5, 0, 0]],
+        )
+        inside, outside = result["values"]["density"]
+        assert inside == pytest.approx(1.0, abs=0.05)
+        assert outside == 0.0
+
+    def test_sample_names_the_fields_there_are(self, call, scene):
+        result = call(
+            "geometry.sample_volume",
+            node_path=f"{scene}/fog",
+            fields=["nope"],
+            positions=[[0, 0, 0]],
+            expect_error=True,
+        )
+        assert "density" in result["message"]
+
+    def test_compare_puts_some_density_inside_the_collider(self, call, scene):
+        result = call(
+            "geometry.compare_volumes",
+            node_path=f"{scene}/fog",
+            field="density",
+            against="surface",
+            against_node=f"{scene}/collider",
+            bands=[-1000, 0, 1000],
+        )
+        inside, outside = result["bands"]
+        assert inside["samples"] > 0 and outside["samples"] > inside["samples"]
+        assert inside["field_total"] + outside["field_total"] == pytest.approx(
+            result["field_total"]
+        )

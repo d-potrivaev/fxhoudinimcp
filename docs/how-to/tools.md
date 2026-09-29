@@ -2,7 +2,7 @@
 
 ## Overview
 
-fxhoudinimcp exposes **208 tools** across **23 categories**, covering every major Houdini context.
+fxhoudinimcp exposes **210 tools** across **23 categories**, covering every major Houdini context.
 
 Once connected, your AI assistant can:
 
@@ -64,11 +64,15 @@ parameters. `get_parm_references` lists who reads a parameter and what it
 reads, and `get_parm_template_tree` reads a node's or type's whole interface
 as a tree of folders.
 
-### Geometry / SOPs (14 tools)
+### Geometry / SOPs (16 tools)
 
 Read points, primitives, attributes and their statistics, volumes, groups and
 group membership, bounding boxes, intrinsics. Sample geometry and run
-nearest-point searches.
+nearest-point searches. `get_volume_info` gives each volume's sum and, with a
+threshold or bins, percentiles, a histogram and the world box of the voxels
+above the threshold; `sample_volume` reads fields at positions or at another
+node's points, and `compare_volumes` totals one field per band of another
+(density inside a collider SDF).
 
 ### LOPs/USD (20 tools)
 
