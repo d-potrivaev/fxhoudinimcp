@@ -422,16 +422,39 @@ def set_viewport_display(
 ###### viewport.set_viewport_direction
 
 
+def _vector3(value, name: str) -> tuple:
+    """Three floats from *value*, or a ValueError naming *name*."""
+    try:
+        numbers = tuple(float(v) for v in value)
+    except (TypeError, ValueError):
+        numbers = ()
+    if len(numbers) != 3:
+        raise ValueError(f"{name} must be three numbers, got {value!r}")
+    return numbers
+
+
 def set_viewport_direction(
-    direction: str,
+    direction: str = None,
     pane_name: str = None,
+    rotation: list = None,
+    pivot: list = None,
+    distance: float = None,
 ) -> dict:
-    """Set the viewport to a standard viewing direction.
+    """Set the viewport to a standard viewing direction, or place the free view.
 
     Args:
         direction: One of 'front', 'back', 'top', 'bottom', 'left', 'right',
             'perspective'.
         pane_name: Optional pane tab name.
+        rotation: [rx, ry, rz] in degrees: the free view's rotation about its
+            pivot.
+        pivot: [x, y, z] the free view orbits.
+        distance: How far the free view sits from its pivot.
+
+    rotation, pivot and distance place the viewport's own (non-camera) view,
+    after *direction* if both are given, and the reply reads it back as
+    ``view``. A viewport looking through a camera is refused: what it shows
+    is the camera, so the camera is what to move.
     """
     direction_map = {
         "front": hou.geometryViewportType.Front,
@@ -443,23 +466,77 @@ def set_viewport_direction(
         "perspective": hou.geometryViewportType.Perspective,
     }
 
-    view_type = direction_map.get(direction.lower())
-    if view_type is None:
-        raise ValueError(
-            f"Unknown direction '{direction}'. Supported: {list(direction_map.keys())}"
-        )
+    free_view = rotation is not None or pivot is not None or distance is not None
+    if direction is None and not free_view:
+        raise ValueError("Pass direction, or rotation / pivot / distance for the free view.")
+    view_type = None
+    if direction is not None:
+        view_type = direction_map.get(str(direction).lower())
+        if view_type is None:
+            raise ValueError(
+                f"Unknown direction '{direction}'. Supported: {list(direction_map.keys())}"
+            )
+    # Checked before the viewer is touched, so a bad value never half-applies.
+    angles = _vector3(rotation, "rotation") if rotation is not None else None
+    centre = _vector3(pivot, "pivot") if pivot is not None else None
+    if distance is not None:
+        try:
+            far = float(distance)
+        except (TypeError, ValueError):
+            far = 0.0
+        if isinstance(distance, bool) or not far > 0:
+            raise ValueError(f"distance must be a positive number, got {distance!r}")
 
     scene_viewer = _find_scene_viewer(pane_name)
     viewport = scene_viewer.curViewport()
-    viewport.changeType(view_type)
-    viewport.frameAll()
+    if free_view:
+        bound = viewport.camera()
+        if bound is not None:
+            raise ValueError(
+                f"The viewport looks through {bound.path()}: rotation/pivot/distance "
+                f"place the viewport's own view. Move the camera instead "
+                f"(set_object_transform), or unbind it first."
+            )
+    if view_type is not None:
+        viewport.changeType(view_type)
+        viewport.frameAll()
 
-    return {
+    result = {
         "success": True,
         "direction": direction,
         "pane_name": scene_viewer.name(),
         "viewport_name": viewport.name(),
     }
+    if not free_view:
+        return result
+
+    # The view's translation is a world position that the rotation turns about
+    # the pivot: the eye is pivot + R * (translation - pivot). Measured on
+    # 22.0.429: moving only the pivot left the eye where it was, looking past
+    # the new pivot. So the eye's offset from the pivot (pan in x/y, distance
+    # in z) is what is kept, and the translation follows the pivot.
+    view = viewport.defaultCamera().stash()
+    old_pivot = list(view.pivot())
+    offset = [t - p for t, p in zip(view.translation(), old_pivot, strict=True)]
+    if angles is not None:
+        rotate = hou.hmath.buildRotate(hou.Vector3(*angles))
+        view.setRotation(rotate.extractRotationMatrix3())
+    if centre is not None or distance is not None:
+        new_pivot = list(centre) if centre is not None else old_pivot
+        if distance is not None:
+            offset[2] = far
+        view.setPivot(hou.Vector3(*new_pivot))
+        view.setTranslation(hou.Vector3(*(p + o for p, o in zip(new_pivot, offset, strict=True))))
+    viewport.setDefaultCamera(view)
+
+    now = viewport.defaultCamera()
+    now_pivot = list(now.pivot())
+    result["view"] = {
+        "rotation": [round(v, 4) for v in hou.Matrix4(now.rotation()).extractRotates()],
+        "pivot": [round(v, 4) for v in now_pivot],
+        "distance": round(now.translation()[2] - now_pivot[2], 4),
+    }
+    return result
 
 
 ###### viewport.set_viewport_renderer
@@ -607,22 +684,93 @@ def frame_selection(pane_name: str = None) -> dict:
 ###### viewport.frame_all
 
 
-def frame_all(pane_name: str = None) -> dict:
-    """Frame all geometry in the viewport (home all).
+def _world_bounds(node: hou.Node) -> list | None:
+    """[xmin, ymin, zmin, xmax, ymax, zmax] of what *node* shows, in world space.
+
+    An object is its display SOP; a SOP's geometry is in its object's space,
+    so it goes through that object's world transform. None without geometry.
+    """
+    owner, target = node, node
+    if isinstance(node, hou.ObjNode):
+        target = node.displayNode()
+    else:
+        while owner is not None and not isinstance(owner, hou.ObjNode):
+            owner = owner.parent()
+    try:
+        box = target.geometry().boundingBox()
+    except Exception:
+        return None
+    if not box.isValid():
+        return None
+    low, high = box.minvec(), box.maxvec()
+    corners = [
+        (x, y, z) for x in (low[0], high[0]) for y in (low[1], high[1]) for z in (low[2], high[2])
+    ]
+    if owner is not None:
+        transform = owner.worldTransform()
+        corners = [tuple(hou.Vector3(*corner) * transform) for corner in corners]
+    return [
+        *(min(corner[i] for corner in corners) for i in range(3)),
+        *(max(corner[i] for corner in corners) for i in range(3)),
+    ]
+
+
+def frame_all(pane_name: str = None, node_paths: list = None, bounds: list = None) -> dict:
+    """Frame all geometry in the viewport (home all), or only some of it.
 
     Args:
         pane_name: Optional pane tab name.
+        node_paths: Frame the world bounds of these objects or SOPs only.
+        bounds: Frame [xmin, ymin, zmin, xmax, ymax, zmax], in world space.
+
+    With *node_paths* or *bounds* (both: the box around all of them), the
+    reply carries ``framed_bounds``, and ``no_geometry`` names any node that
+    had nothing to frame.
     """
+    box = None
+    empty: list = []
+    if bounds is not None:
+        try:
+            box = [float(v) for v in bounds]
+        except (TypeError, ValueError):
+            box = []
+        if len(box) != 6 or any(box[i] > box[i + 3] for i in range(3)):
+            raise ValueError(f"bounds must be [xmin, ymin, zmin, xmax, ymax, zmax], got {bounds!r}")
+    if node_paths is not None:
+        if isinstance(node_paths, str):
+            node_paths = [node_paths]
+        missing = [path for path in node_paths if hou.node(str(path)) is None]
+        if missing:
+            raise ValueError(f"Node(s) not found: {missing}")
+        for path in node_paths:
+            found = _world_bounds(hou.node(str(path)))
+            if found is None:
+                empty.append(path)
+            elif box is None:
+                box = found
+            else:
+                box = [min(box[i], found[i]) for i in range(3)] + [
+                    max(box[i], found[i]) for i in range(3, 6)
+                ]
+        if box is None:
+            raise ValueError(f"Nothing to frame: no geometry on {empty}")
+
     scene_viewer = _find_scene_viewer(pane_name)
     viewport = scene_viewer.curViewport()
-
-    viewport.homeAll()
-
-    return {
+    result = {
         "success": True,
         "pane_name": scene_viewer.name(),
         "viewport_name": viewport.name(),
     }
+    if box is None:
+        viewport.homeAll()
+        return result
+
+    viewport.frameBoundingBox(hou.BoundingBox(*box))
+    result["framed_bounds"] = [round(v, 4) for v in box]
+    if empty:
+        result["no_geometry"] = empty
+    return result
 
 
 ###### viewport.capture_screenshot

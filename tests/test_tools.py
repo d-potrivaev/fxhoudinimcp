@@ -17,7 +17,7 @@ from fxhoudinimcp.tools.scene import (
     new_scene,
     undo,
 )
-from fxhoudinimcp.tools.viewport import set_viewport_display
+from fxhoudinimcp.tools.viewport import frame_all, set_viewport_direction, set_viewport_display
 from fxhoudinimcp.tools.workflows import setup_pyro_sim
 
 
@@ -349,6 +349,20 @@ class TestParityTools:
     async def test_set_update_mode_with_no_mode_reads(self, mock_ctx, mock_bridge):
         await set_update_mode(mock_ctx)
         mock_bridge.execute.assert_called_once_with("code.set_update_mode", {})
+
+    @pytest.mark.asyncio
+    async def test_viewport_direction_sends_only_the_free_view(self, mock_ctx, mock_bridge):
+        await set_viewport_direction(mock_ctx, rotation=[-20, 30, 0], distance=12)
+        mock_bridge.execute.assert_called_once_with(
+            "viewport.set_viewport_direction", {"rotation": [-20, 30, 0], "distance": 12}
+        )
+
+    @pytest.mark.asyncio
+    async def test_frame_all_sends_the_nodes_to_frame(self, mock_ctx, mock_bridge):
+        await frame_all(mock_ctx, node_paths=["/obj/geo1"])
+        mock_bridge.execute.assert_called_once_with(
+            "viewport.frame_all", {"node_paths": ["/obj/geo1"]}
+        )
 
     @pytest.mark.asyncio
     async def test_viewport_display_sends_only_what_was_given(self, mock_ctx, mock_bridge):

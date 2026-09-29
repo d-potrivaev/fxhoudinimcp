@@ -141,6 +141,21 @@ class TestBadValuesAreRejected:
             f"execute_hscript swallowed an unknown command entirely: {result}"
         )
 
+    @pytest.mark.parametrize(
+        ("command", "params", "named"),
+        [
+            ("viewport.set_viewport_direction", {"distance": 0}, "distance"),
+            ("viewport.set_viewport_direction", {"rotation": [0, 45]}, "rotation"),
+            ("viewport.frame_all", {"bounds": [0, 0, 0, 1, 1]}, "bounds"),
+            ("viewport.frame_all", {"node_paths": [GONE]}, GONE),
+        ],
+    )
+    def test_the_view_refuses_a_bad_value_before_the_ui(self, call, command, params, named):
+        # Checked before the viewer is looked up, so hython answers the same.
+        message = message_of(call(command, assert_failure=True, **params))
+        assert named in message, message
+        assert "no ui" not in message.lower(), message
+
 
 def test_the_no_failure_input_list_is_still_true():
     """Each command claimed to have no bad input must still take none.

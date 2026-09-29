@@ -137,35 +137,58 @@ async def frame_selection(
 async def frame_all(
     ctx: Context,
     pane_name: str | None = None,
+    node_paths: list[str] | None = None,
+    bounds: list[float] | None = None,
 ) -> dict:
-    """Frame all geometry in the viewport.
+    """Frame all geometry in the viewport, or only some nodes or a box.
 
     Args:
         pane_name: Pane tab name.
+        node_paths: Frame just these objects or SOPs (their world bounds),
+            not the spread of everything in the scene.
+        bounds: Frame [xmin, ymin, zmin, xmax, ymax, zmax], world space.
     """
     bridge = _get_bridge(ctx)
     params: dict[str, Any] = {}
-    if pane_name is not None:
-        params["pane_name"] = pane_name
+    for key, value in (("pane_name", pane_name), ("node_paths", node_paths), ("bounds", bounds)):
+        if value is not None:
+            params[key] = value
     return await bridge.execute("viewport.frame_all", params)
 
 
 @mcp.tool()
 async def set_viewport_direction(
     ctx: Context,
-    direction: str,
+    direction: str | None = None,
     pane_name: str | None = None,
+    rotation: list[float] | None = None,
+    pivot: list[float] | None = None,
+    distance: float | None = None,
 ) -> dict:
-    """Set the viewport to a standard viewing direction.
+    """Set the viewport to a standard viewing direction, or place the free view.
+
+    rotation/pivot/distance orbit the viewport's own (non-camera) view:
+    rotation [rx, ry, rz] in degrees about the pivot, distance from it. The
+    reply reads the view back. Looking through a camera, move the camera.
 
     Args:
         direction: "front", "back", "top", "bottom", "left", "right", or "perspective".
         pane_name: Pane tab name.
+        rotation: [rx, ry, rz] degrees for the free view.
+        pivot: [x, y, z] the free view orbits.
+        distance: Distance of the free view from its pivot.
     """
     bridge = _get_bridge(ctx)
-    params: dict[str, Any] = {"direction": direction}
-    if pane_name is not None:
-        params["pane_name"] = pane_name
+    params: dict[str, Any] = {}
+    for key, value in (
+        ("direction", direction),
+        ("pane_name", pane_name),
+        ("rotation", rotation),
+        ("pivot", pivot),
+        ("distance", distance),
+    ):
+        if value is not None:
+            params[key] = value
     return await bridge.execute("viewport.set_viewport_direction", params)
 
 
