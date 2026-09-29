@@ -2,7 +2,7 @@
 
 ## Overview
 
-fxhoudinimcp exposes **206 tools** across **23 categories**, covering every major Houdini context.
+fxhoudinimcp exposes **208 tools** across **23 categories**, covering every major Houdini context.
 
 Once connected, your AI assistant can:
 
@@ -30,7 +30,7 @@ Houdini, `find_expensive_nodes` profiles cook costs, `cook_frame_range` cooks
 a range and reports per-frame evidence, and `get_cook_status` reports where a
 cook stands.
 
-### Documentation (2 tools)
+### Documentation (3 tools)
 
 `search_help` runs full-text search over the documentation Houdini ships in
 `$HFS/houdini/help`: node reference, VEX, expressions, HOM, and SideFX's own
@@ -70,7 +70,7 @@ Read points, primitives, attributes and their statistics, volumes, groups and
 group membership, bounding boxes, intrinsics. Sample geometry and run
 nearest-point searches.
 
-### LOPs/USD (18 tools)
+### LOPs/USD (20 tools)
 
 Stage inspection, USD prims and attributes, layers, composition arcs, variants,
 materials, lights and light rigs.
@@ -90,7 +90,7 @@ or one work item, schedulers and dependency graphs.
 
 Image nodes, layers, and VDB data access.
 
-### HDAs (11 tools)
+### HDAs (13 tools)
 
 Create, install, uninstall, reload and update Houdini Digital Assets, list
 every installed version of an asset's type, and read or write their sections.
@@ -109,7 +109,7 @@ management, render settings, launching and monitoring renders.
 Create/edit wrangle nodes, read wrangle code, build VEX expressions, and
 validate VEX code before it cooks.
 
-### Code Execution (6 tools)
+### Code Execution (7 tools)
 
 Execute Python and HScript, evaluate expressions, read environment variables,
 list every file the scene references (and which are missing), and switch the
