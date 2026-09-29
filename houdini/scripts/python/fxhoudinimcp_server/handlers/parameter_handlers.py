@@ -1595,26 +1595,32 @@ def _sweep_parameters(
             "is not an answer anyone can read. Name what to look for, e.g. ['file']."
         )
     lowered = [p.lower() for p in patterns]
-    nodes = list(parent.allSubChildren() if recursive else parent.children())
+    # A locked asset's instance stays (its interface is the user's); what is
+    # inside it is the asset's own business -- unless the sweep was asked to
+    # start inside one.
+    asked_inside = False
+    with contextlib.suppress(Exception):
+        asked_inside = parent.isLockedHDA() or parent.isInsideLockedHDA()
+    reads_locked = include_locked_assets or asked_inside
+    # A locked asset's contents load on demand: until something syncs them,
+    # allSubChildren() answers none (a fresh popsolver: 0 of its ~670 nodes).
+    nodes = list(
+        parent.allSubChildren(sync_delayed_definition=reads_locked)
+        if recursive
+        else parent.children()
+    )
     skipped_locked = 0
-    if recursive and not include_locked_assets:
-        # A locked asset's instance stays (its interface is the user's); what
-        # is inside it is the asset's own business -- unless the sweep was
-        # asked to start inside one.
-        asked_inside = False
-        with contextlib.suppress(Exception):
-            asked_inside = parent.isLockedHDA() or parent.isInsideLockedHDA()
-        if not asked_inside:
-            kept = []
-            for node in nodes:
-                buried = False
-                with contextlib.suppress(Exception):
-                    buried = node.isInsideLockedHDA()
-                if buried:
-                    skipped_locked += 1
-                else:
-                    kept.append(node)
-            nodes = kept
+    if recursive and not reads_locked:
+        kept = []
+        for node in nodes:
+            buried = False
+            with contextlib.suppress(Exception):
+                buried = node.isInsideLockedHDA()
+            if buried:
+                skipped_locked += 1
+            else:
+                kept.append(node)
+        nodes = kept
     rows: list[dict[str, Any]] = []
     matched = 0
     scanned = 0

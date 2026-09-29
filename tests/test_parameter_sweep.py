@@ -125,6 +125,18 @@ class TestRecursiveSweepStopsAtLockedAssets:
         assert "skipped_inside_locked_assets" not in result
         assert "note" not in result
 
+    def test_reading_inside_loads_the_delayed_contents(self, monkeypatch):
+        # A fresh popsolver's ~670 nodes are not loaded until synced, so
+        # include_locked_assets answered none of them.
+        parent = self._popnet(monkeypatch)
+        parameters._get_parameters(
+            inside="/mat/lib", patterns=["file"], recursive=True, include_locked_assets=True
+        )
+        parent.allSubChildren.assert_called_once_with(sync_delayed_definition=True)
+        parent.allSubChildren.reset_mock()
+        parameters._get_parameters(inside="/mat/lib", patterns=["file"], recursive=True)
+        parent.allSubChildren.assert_called_once_with(sync_delayed_definition=False)
+
     def test_a_sweep_that_starts_inside_a_locked_asset_reads_it(self, monkeypatch):
         parent = self._popnet(monkeypatch)
         parent.isLockedHDA.return_value = True
