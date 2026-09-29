@@ -50,4 +50,21 @@ def build_server(*, name: str, instructions: str, lifespan, version: str):
         return server
 
 
-__all__ = ["Context", "Server", "build_server"]
+def forbid_unknown_arguments(server, name: str) -> None:
+    """Make tool ``name`` refuse arguments it does not declare.
+
+    The SDK's argument model ignores extra keys, so a misspelled filter
+    (``node_typ="geo"``) was dropped and the call answered as if unfiltered,
+    which reads as a filter that matched everything. With ``extra="forbid"``
+    the call fails naming the key, and the advertised schema says
+    ``additionalProperties: false``. ``_tool_manager`` and ``fn_metadata`` are
+    private but identical on 1.x and 2.x, which is why this lives here.
+    """
+    tool = server._tool_manager.get_tool(name)
+    model = tool.fn_metadata.arg_model
+    model.model_config["extra"] = "forbid"
+    model.model_rebuild(force=True)
+    tool.parameters = model.model_json_schema(by_alias=True)
+
+
+__all__ = ["Context", "Server", "build_server", "forbid_unknown_arguments"]

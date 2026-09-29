@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 from fxhoudinimcp._loader import load_markdown
 
 # Third-party
-from fxhoudinimcp._sdk import Server, build_server
+from fxhoudinimcp._sdk import Server, build_server, forbid_unknown_arguments
 from fxhoudinimcp._version import __version__
 
 # Internal
@@ -239,6 +239,7 @@ def _compact_tool(*args, **kwargs):
         with contextlib.suppress(Exception):
             compact.__signature__ = inspect.signature(function, eval_str=True)
         register(compact)
+        forbid_unknown_arguments(mcp, kwargs.get("name") or function.__name__)
         return function
 
     return decorator

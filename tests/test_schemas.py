@@ -44,3 +44,13 @@ async def test_all_tool_schemas_are_typed():
     assert tools, "no tools registered"
     for tool in tools:
         _assert_typed(tool_input_schema(tool), tool.name)
+
+
+@pytest.mark.asyncio
+async def test_every_tool_refuses_unknown_arguments():
+    # A dropped misspelled filter answers as if unfiltered and looks like a match.
+    tools = await mcp.list_tools()
+    loose = [t.name for t in tools if tool_input_schema(t).get("additionalProperties") is not False]
+    assert not loose, f"tools accepting unknown arguments: {loose}"
+    with pytest.raises(Exception, match="bogus_filter"):
+        await mcp.call_tool("find_nodes", {"pattern": "x", "bogus_filter": "geo"})
