@@ -1493,12 +1493,38 @@ def build_network(
 ###### graph.verify_network
 
 
-def verify_network(parent_path: str, **_: Any) -> dict:
+def _needs_to_cook(node: hou.Node) -> bool:
+    with contextlib.suppress(Exception):
+        return bool(node.needsToCook())
+    return False
+
+
+def _has_errors(node: hou.Node) -> bool:
+    with contextlib.suppress(Exception):
+        return bool(node.errors())
+    return False
+
+
+def verify_network(parent_path: str, force_cook: bool = False, **_: Any) -> dict:
     """Inspect every node in a network: the 'middle-click everything' pass.
 
     Cooks the display node, then reports per-node errors/warnings/flags
     plus cooked-geometry evidence, so claims about a build can be checked
     against reality in one call.
+
+    `node.errors()` is the verdict of the node's last cook. A node off the
+    display chain whose cause of failure was fixed since (a File SOP given
+    a path that now exists) keeps listing the old error until something
+    cooks it. Such a node, one with errors that needs a cook, is marked
+    `stale` and named in `stale_error_nodes`.
+
+    `force_cook=True` cooks the display node with force and recooks every
+    node that has errors before the report is taken, so the verdict is about
+    the network as it is now. Every erroring node, not only the dirty ones:
+    an error left by evaluating a parameter outside a cook does not mark the
+    node dirty, and only a forced cook of that node clears it. The default
+    cooks the display node only, as before, so a heavy scene is not
+    recooked without being asked.
     """
     parent = hou.node(parent_path)
     if parent is None:
@@ -1513,28 +1539,55 @@ def verify_network(parent_path: str, **_: Any) -> dict:
         )
     if display is not None:
         with contextlib.suppress(hou.OperationFailed):
-            display.cook(force=False)
+            display.cook(force=bool(force_cook))
+
+    children = list(parent.children())
+    # Recook before any report is taken: a recook cooks the node's inputs
+    # too, so a report taken earlier in the same loop could be out of date.
+    recooked = set()
+    if force_cook:
+        for child in children:
+            if _has_errors(child):
+                with contextlib.suppress(hou.OperationFailed):
+                    child.cook(force=True)
+                recooked.add(child.path())
 
     reports = []
-    for child in parent.children():
+    stale_nodes = []
+    for child in children:
         report = _node_report(child)
+        if child.path() in recooked:
+            report["recooked"] = True
+        # _has_errors, not report["errors"]: those also list dangling ch()
+        # references, which no recook fixes.
+        elif _has_errors(child) and _needs_to_cook(child):
+            report["stale"] = True
+            stale_nodes.append(child.path())
         if getattr(child, "isDisplayFlagSet", lambda: False)():
             report["display"] = True
         reports.append(report)
 
     error_nodes = [r["path"] for r in reports if r.get("errors")]
     licensing = license_error([e for r in reports for e in r.get("errors", ())])
-    return {
+    result = {
         "parent_path": parent_path,
         "node_count": len(reports),
         "display_node": display.path() if display is not None else None,
         "geometry": _geometry_summary(display) if display is not None else None,
         "error_nodes": error_nodes,
+        "stale_error_nodes": stale_nodes,
         "healthy": not error_nodes,
         # Named apart from the rest because no scene change fixes it.
         "license_error": licensing,
+        "force_cook": bool(force_cook),
         "nodes": reports,
     }
+    if stale_nodes:
+        result["note"] = (
+            "Errors on stale nodes are from a cook that predates their last change; "
+            "call verify_network(force_cook=True) to recook them before judging."
+        )
+    return result
 
 
 ###### graph.get_node_card
