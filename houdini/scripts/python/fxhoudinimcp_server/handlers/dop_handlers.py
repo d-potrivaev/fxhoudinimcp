@@ -8,7 +8,9 @@ stepping, resetting, and memory usage.
 from __future__ import annotations
 
 # Built-in
+import contextlib
 import logging
+from typing import Any
 
 # Third-party
 import hou
@@ -40,6 +42,50 @@ def _get_simulation(node_path: str) -> hou.DopSimulation:
             f"Node '{node_path}' does not have a simulation. Ensure it is a DOP network node."
         )
     return sim
+
+
+def _reset_button_owner(node: hou.Node) -> hou.Node | None:
+    """The node whose Reset Simulation button resets *node*'s simulation.
+
+    That is *node* itself or its nearest parent with a "resimulate" parm (the
+    DOP network, or a SOP-level solver such as a POP Network), None if none.
+    """
+    owner = node
+    while owner is not None and owner.parm("resimulate") is None:
+        owner = owner.parent()
+    return owner
+
+
+# A write through HOM into a node inside a DOP network leaves the frames the
+# simulation already cooked as they were. Measured on 22.0.429: a POP
+# source's impulserate 100 -> 400, then 50, then 250, and frame 25 still held
+# 100 particles however long the wait and whichever frames were visited in
+# between; the same with a bare parm.set() and hou.setFrame(). Only a reset
+# of the simulation brought the new value.
+_DOP_CACHE_NOTE = (
+    "Frames this simulation cooked before this edit may still hold the old "
+    "result: a parameter written inside a DOP network does not reset its cache. "
+    "Call reset_simulation(node_path=<network>) before reading such a frame."
+)
+
+
+def dop_cache_note(nodes: Any) -> dict[str, Any] | None:
+    """The simulations an edit of *nodes* leaves with stale cooked frames, or None.
+
+    ``networks`` are the nodes reset_simulation presses for them, so any of
+    them can be passed to it as is; nodes outside a DOP network add nothing.
+    """
+    networks: list[str] = []
+    for node in nodes or ():
+        with contextlib.suppress(Exception):
+            if node.type().category() != hou.dopNodeTypeCategory():
+                continue
+            owner = _reset_button_owner(node)
+            if owner is not None and owner.path() not in networks:
+                networks.append(owner.path())
+    if not networks:
+        return None
+    return {"networks": networks, "note": _DOP_CACHE_NOTE}
 
 
 def _subdata_tree(data: hou.DopData, depth: int = 0, max_depth: int = 4) -> list[dict]:
@@ -353,9 +399,7 @@ def _reset_simulation(node_path: str) -> dict:
     # and this reported simulation_reset after only moving the frame. The
     # reset is the network's own Reset Simulation button ("resimulate", also
     # the name on the SOP-level solvers).
-    owner = node
-    while owner is not None and owner.parm("resimulate") is None:
-        owner = owner.parent()
+    owner = _reset_button_owner(node)
     if owner is None:
         raise ValueError(f"No Reset Simulation button on {node_path} or any of its parents.")
     owner.parm("resimulate").pressButton()

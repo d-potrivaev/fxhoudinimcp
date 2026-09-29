@@ -76,6 +76,9 @@ async def build_network(
     There is no "children" key: build the subnet, then call build_network
     again with the subnet as parent_path.
 
+    Nodes built inside a DOP network come with `simulation_cache`: the
+    network to pass to reset_simulation before reading a frame it cooked.
+
     Args:
         parent_path: Network to build inside (e.g. "/obj/geo1"). A missing
             parent directly under /obj is created, as the container the

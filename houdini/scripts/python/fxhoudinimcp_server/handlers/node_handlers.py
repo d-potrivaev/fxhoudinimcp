@@ -31,6 +31,7 @@ from fxhoudinimcp_server.config import (
 )
 from fxhoudinimcp_server.dispatcher import register_handler
 from fxhoudinimcp_server.errors import readable_message
+from fxhoudinimcp_server.handlers.dop_handlers import dop_cache_note
 from fxhoudinimcp_server.serialize import to_jsonable
 
 ###### Helpers
@@ -116,13 +117,16 @@ def create_node(
 
     _focus_network_editor(node)
 
-    return {
+    result = {
         "success": True,
         "node_path": node.path(),
         "node_type": node.type().name(),
         "name": node.name(),
         "position": list(node.position()),
     }
+    if cache := dop_cache_note([node]):
+        result["simulation_cache"] = cache
+    return result
 
 
 ###### nodes.delete_node
@@ -831,6 +835,8 @@ def connect_nodes(
     if indirect_input is not None:
         # source_path stays a path a caller can reuse; the connector is here.
         result["indirect_input"] = int(indirect_input)
+    if cache := dop_cache_note([dest]):
+        result["simulation_cache"] = cache
     return result
 
 

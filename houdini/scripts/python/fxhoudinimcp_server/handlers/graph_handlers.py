@@ -33,6 +33,7 @@ from fxhoudinimcp_server.config import (
 )
 from fxhoudinimcp_server.dispatcher import register_handler
 from fxhoudinimcp_server.errors import readable_message
+from fxhoudinimcp_server.handlers.dop_handlers import dop_cache_note
 from fxhoudinimcp_server.handlers.node_handlers import (
     _find_input,
     _find_output,
@@ -1672,6 +1673,8 @@ def build_network(
         )
     if warnings:
         result["warning"] = " ".join(warnings)
+    if cache := dop_cache_note(created.values()):
+        result["simulation_cache"] = cache
     return result
 
 
