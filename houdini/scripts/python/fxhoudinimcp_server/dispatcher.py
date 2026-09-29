@@ -254,7 +254,10 @@ def dispatch(command: str, params: dict[str, Any]) -> dict[str, Any]:
             def _run():
                 try:
                     container["result"] = hdefereval.executeInMainThreadWithResult(_execute)
-                except Exception as exc:
+                except BaseException as exc:  # noqa: BLE001
+                    # BaseException too: a KeyboardInterrupt or SystemExit from
+                    # the main thread used to kill this thread with nothing in
+                    # the container, and the caller read a bare KeyError 'result'.
                     container["error"] = exc
                     container["tb"] = traceback.format_exc()
 
@@ -286,7 +289,10 @@ def dispatch(command: str, params: dict[str, Any]) -> dict[str, Any]:
                     "status": "error",
                     "error": {
                         "code": "DISPATCH_ERROR",
-                        "message": f"Failed to dispatch to main thread: {container['error']}",
+                        "message": (
+                            "Failed to dispatch to main thread: "
+                            f"{type(container['error']).__name__}: {container['error']}"
+                        ),
                         "traceback": container.get("tb", ""),
                     },
                 }

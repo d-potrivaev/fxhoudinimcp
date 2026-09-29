@@ -145,6 +145,19 @@ class TestCommandTimeout:
         assert result["error"]["code"] == "TIMEOUT"
         assert "FXHOUDINIMCP_TIMEOUT_SLOW_CMD" in result["error"]["message"]
 
+    def test_a_base_exception_from_the_main_thread_is_named(self, monkeypatch):
+        """A KeyboardInterrupt used to leave the caller a bare KeyError 'result'."""
+        monkeypatch.setattr(_disp, "HAS_HDEFEREVAL", True)
+        fake = MagicMock()
+        fake.executeInMainThreadWithResult.side_effect = KeyboardInterrupt()
+        monkeypatch.setattr(_disp, "hdefereval", fake)
+        _handler_registry.clear()
+        register_handler("any.cmd", lambda: {"ok": True})
+        result = dispatch("any.cmd", {})
+        assert result["status"] == "error"
+        assert result["error"]["code"] == "DISPATCH_ERROR"
+        assert "KeyboardInterrupt" in result["error"]["message"]
+
 
 class TestUndoGroup:
     """One dispatched command is one undo step."""
