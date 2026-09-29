@@ -5,12 +5,6 @@
   </p>
 
   <p align="center">
-    The most comprehensive MCP server for SideFX Houdini.
-    <br/>
-    208 tools across 23 categories, covering every major Houdini context.
-  </p>
-
-  <p align="center">
     <!-- Maintenance status -->
     <img src="https://img.shields.io/badge/maintenance-actively--developed-brightgreen.svg?&label=Maintenance">&nbsp;&nbsp;
     <!-- License -->
