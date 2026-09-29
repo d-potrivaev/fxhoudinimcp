@@ -7,6 +7,11 @@ an execute_python. get_parameters now takes `inside` (a network) instead of
 capped at 2000 rows with `truncated`. `patterns` is required there, and
 `node_path` with `inside` is refused.
 
+A recursive sweep does not read the nodes inside locked HDAs (the instance
+itself is read): a POP network's file patterns came back as hundreds of rows
+of the solvers' own internals. They are counted in
+`skipped_inside_locked_assets`; include_locked_assets=True reads them.
+
 hou is mocked here and only through monkeypatch; the live check ran on
 Houdini 22.0.429 (six file SOPs, one call, six rows, `$JOB` visible raw).
 """
@@ -55,11 +60,13 @@ def _parm(name, value, raw=None, kind="String", label=None):
     return parm
 
 
-def _node(path, type_name, parms):
+def _node(path, type_name, parms, inside_locked=False):
     node = MagicMock()
     node.path.return_value = path
     node.type.return_value.name.return_value = type_name
     node.parms.return_value = list(parms)
+    node.isLockedHDA.return_value = False
+    node.isInsideLockedHDA.return_value = inside_locked
     return node
 
 
@@ -77,10 +84,59 @@ def _image(path, raw):
 def _library(monkeypatch, children, descendants=None):
     parent = MagicMock()
     parent.path.return_value = "/mat/lib"
+    parent.isLockedHDA.return_value = False
+    parent.isInsideLockedHDA.return_value = False
     parent.children.return_value = list(children)
     parent.allSubChildren.return_value = list(descendants or children)
     monkeypatch.setattr(parameters.hou, "node", lambda path: parent if path == "/mat/lib" else None)
     return parent
+
+
+class TestRecursiveSweepStopsAtLockedAssets:
+    def _popnet(self, monkeypatch):
+        solver = _node("/obj/sim/popnet/popsolver1", "popsolver", [_parm("file", "")])
+        buried = _node(
+            "/obj/sim/popnet/popsolver1/filedef",
+            "file",
+            [_parm("file", "default.bgeo")],
+            inside_locked=True,
+        )
+        cache = _node("/obj/sim/filecache1", "filecache", [_parm("file", "$HIP/sim.bgeo.sc")])
+        parent = _library(monkeypatch, [], descendants=[solver, buried, cache])
+        return parent
+
+    def test_the_insides_of_a_locked_asset_are_skipped_and_counted(self, monkeypatch):
+        self._popnet(monkeypatch)
+        result = parameters._get_parameters(inside="/mat/lib", patterns=["file"], recursive=True)
+        assert [r["node"] for r in result["rows"]] == [
+            "/obj/sim/popnet/popsolver1",
+            "/obj/sim/filecache1",
+        ]
+        assert result["nodes_scanned"] == 2
+        assert result["skipped_inside_locked_assets"] == 1
+        assert "include_locked_assets=True" in result["note"]
+
+    def test_include_locked_assets_reads_them(self, monkeypatch):
+        self._popnet(monkeypatch)
+        result = parameters._get_parameters(
+            inside="/mat/lib", patterns=["file"], recursive=True, include_locked_assets=True
+        )
+        assert len(result["rows"]) == 3
+        assert "skipped_inside_locked_assets" not in result
+        assert "note" not in result
+
+    def test_a_sweep_that_starts_inside_a_locked_asset_reads_it(self, monkeypatch):
+        parent = self._popnet(monkeypatch)
+        parent.isLockedHDA.return_value = True
+        result = parameters._get_parameters(inside="/mat/lib", patterns=["file"], recursive=True)
+        assert len(result["rows"]) == 3
+        assert "skipped_inside_locked_assets" not in result
+
+    def test_nothing_skipped_answers_as_before(self, monkeypatch):
+        _library(monkeypatch, [], descendants=[_image("/mat/lib/sub/img", "$JOB/a.exr")])
+        result = parameters._get_parameters(inside="/mat/lib", patterns=["file"], recursive=True)
+        assert len(result["rows"]) == 1
+        assert "skipped_inside_locked_assets" not in result
 
 
 class TestGetParametersInsideANetwork:

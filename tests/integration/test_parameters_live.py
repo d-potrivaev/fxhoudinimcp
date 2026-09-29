@@ -203,6 +203,58 @@ class TestGetParametersBulk:
         assert parms["gate"]["default_expression"] == "$F>1"
 
 
+class TestSweepStopsAtLockedAssets:
+    """A recursive sweep read every node inside every locked asset."""
+
+    @pytest.fixture
+    def network(self, tmp_path):
+        geo = hou.node("/obj").createNode("geo", "sweep1")
+        cache = geo.createNode("file", "cache")
+        subnet = geo.createNode("subnet", "packer")
+        subnet.createNode("file", "reader")
+        library = str(tmp_path / "packer.hda").replace("\\", "/")
+        asset = subnet.createDigitalAsset(
+            name="fxh::packer_live::1.0", hda_file_name=library, description="Packer"
+        )
+        # createDigitalAsset leaves the new instance unlocked (22.0.429).
+        asset.matchCurrentDefinition()
+        yield geo, cache, asset
+        definition = asset.type().definition()
+        asset.destroy()
+        definition.destroy()
+
+    def test_the_asset_is_read_and_its_insides_are_counted(self, call, network):
+        geo, cache, asset = network
+        assert asset.isLockedHDA()
+        inside = asset.path() + "/"
+        result = call(
+            "parameters.get_parameters", inside=geo.path(), patterns=["file"], recursive=True
+        )
+        read = {row["node"] for row in result["rows"]}
+        assert cache.path() in read
+        assert not any(path.startswith(inside) for path in read), read
+        assert result["skipped_inside_locked_assets"] >= 1
+        assert "include_locked_assets" in result["note"]
+
+        everything = call(
+            "parameters.get_parameters",
+            inside=geo.path(),
+            patterns=["file"],
+            recursive=True,
+            include_locked_assets=True,
+        )
+        assert inside + "reader" in {row["node"] for row in everything["rows"]}
+        assert "skipped_inside_locked_assets" not in everything
+
+    def test_a_sweep_that_starts_inside_the_asset_reads_it(self, call, network):
+        _, _, asset = network
+        result = call(
+            "parameters.get_parameters", inside=asset.path(), patterns=["file"], recursive=True
+        )
+        assert asset.path() + "/reader" in {row["node"] for row in result["rows"]}
+        assert "skipped_inside_locked_assets" not in result
+
+
 class TestMultiparmInstanceDiscovery:
     """The recorded failure case: naming a multiparm instance parameter.
 
