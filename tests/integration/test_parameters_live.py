@@ -118,6 +118,39 @@ class TestExpressionsAndLinks:
         assert hou.node(box).parm("sizex").isLocked() is True
 
 
+class TestExpressionOnAnotherFrame:
+    """A literal written at frame 6 to a File Cache's f = ($FSTART, $FEND)."""
+
+    @pytest.fixture
+    def cache(self):
+        geo = hou.node("/obj").createNode("geo", "fc_host")
+        node = geo.createNode("filecache::2.0", "fc")
+        hou.setFrame(6)
+        return node
+
+    def test_the_write_that_did_not_land_is_reported(self, call, cache):
+        answer = call(
+            "parameters.set_parameter", node_path=cache.path(), parm_name="f", value=[1, 3, 1]
+        )
+
+        kept = {c["component"] for c in answer.get("expression_components", [])}
+        assert "f2" in kept, answer
+        assert answer["new_value"][1] != 3.0, "the literal was expected not to take"
+
+    def test_override_expression_makes_every_component_land(self, call, cache):
+        call("parameters.set_parameter", node_path=cache.path(), parm_name="f", value=[1, 3, 1])
+
+        call(
+            "parameters.set_parameter",
+            node_path=cache.path(),
+            parm_name="f",
+            value=[1, 3, 1],
+            override_expression=True,
+        )
+
+        assert [cache.parm(n).eval() for n in ("f1", "f2", "f3")] == [1.0, 3.0, 1.0]
+
+
 class TestSpareParameters:
     def test_create_spare_parameter_with_default(self, call, box):
         call(
