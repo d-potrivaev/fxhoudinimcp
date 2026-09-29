@@ -176,15 +176,29 @@ async def main() -> int:
         selected_before = selection(await call("context.get_selection", soft=True))
         await call("viewport.set_current_network", network_path="/obj", other_objects=None)
         await call("viewport.set_current_network", network_path=container, other_objects=None)
+        # The editor follows a selected node to its network on the next UI
+        # tick, so a selection outside the container would pull it back out.
+        await asyncio.sleep(0.5)
         kept = await call("viewport.get_viewport_info", soft=True) or {}
         selected_after = selection(await call("context.get_selection", soft=True))
-        if kept.get("camera_path") == obj_cam["node_path"] and selected_after == selected_before:
-            record("PASS", "set_current_network keeps the camera and the selection")
+        editors = [
+            pane.get("current_path")
+            for pane in ((await call("viewport.list_panes", soft=True)) or {}).get("panes", [])
+            if pane.get("type") == "NetworkEditor"
+        ]
+        inside = [path for path in selected_before if path.rsplit("/", 1)[0] == container]
+        if (
+            kept.get("camera_path") == obj_cam["node_path"]
+            and selected_after == inside
+            and container in editors
+        ):
+            record("PASS", "set_current_network keeps the camera and stays where it went")
         else:
             record(
                 "FAIL",
                 "set_current_network changed the viewer",
-                f"camera {kept.get('camera_path')}, selection {selected_before} -> {selected_after}",
+                f"camera {kept.get('camera_path')}, selection {selected_before} -> "
+                f"{selected_after}, editors in {editors}",
             )
 
         ###### Solaris: the case that could not be done at all before
