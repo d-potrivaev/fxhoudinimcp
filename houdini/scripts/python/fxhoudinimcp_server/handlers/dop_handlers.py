@@ -325,42 +325,59 @@ def _get_dop_field(
     }
 
 
+def _relationship_names(obj_records: dict, record_type: str) -> list:
+    """Relationship names an object lists under one of its Rel* records."""
+    found = obj_records.get(record_type)
+    if found is None:
+        return []
+    if isinstance(found, dict):
+        found = [found]
+    return [f.get("relname") for f in found if isinstance(f, dict) and f.get("relname")]
+
+
 def _get_dop_relationships(node_path: str) -> dict:
-    """List relationships between DOP objects."""
+    """List relationships between DOP objects.
+
+    Relationships belong to the simulation, not to an object (``hou.DopObject``
+    has no ``relationships()``), so they come from ``sim.relationships()`` and
+    each object's ``RelInGroup``/``RelInAffectors`` records say who is in them.
+    """
     sim = _get_simulation(node_path)
-    objects = sim.objects()
+
+    members: dict = {}
+    for obj in sim.objects() or []:
+        try:
+            recs = _records_to_dict(obj)
+        except (hou.OperationFailed, hou.ObjectWasDeleted, AttributeError) as e:
+            logger.debug("Could not read records for object: %s", e)
+            continue
+        for key, bucket in (("RelInGroup", "group"), ("RelInAffectors", "affectors")):
+            for relname in _relationship_names(recs, key):
+                members.setdefault(relname, {"group": [], "affectors": []})[bucket].append(
+                    obj.name()
+                )
 
     relationships = []
-    if objects is not None:
-        for obj in objects:
+    for rel in sim.relationships() or []:
+        try:
+            entry = {"name": rel.name()}
             try:
-                rels = obj.relationships()
-                if rels is None:
-                    continue
-                for rel in rels:
-                    entry = {
-                        "name": rel.name(),
-                    }
-                    try:
-                        entry["type"] = rel.dataType()
-                    except (hou.OperationFailed, AttributeError) as e:
-                        logger.debug("Could not read relationship data_type: %s", e)
-                        entry["type"] = "unknown"
-                    try:
-                        entry["records"] = _records_to_dict(rel)
-                    except (hou.OperationFailed, AttributeError) as e:
-                        logger.debug("Could not read relationship records: %s", e)
-                        entry["records"] = {}
-                    # Try to find objects involved
-                    try:
-                        entry["object_names"] = [o.name() for o in rel.objects()]
-                    except (hou.OperationFailed, AttributeError) as e:
-                        logger.debug("Could not read relationship objects: %s", e)
-                        entry["source_object"] = obj.name()
-                    relationships.append(entry)
-            except (hou.OperationFailed, hou.ObjectWasDeleted, AttributeError) as e:
-                logger.debug("Could not read relationships for object: %s", e)
-                continue
+                entry["type"] = rel.dataType()
+            except (hou.OperationFailed, AttributeError) as e:
+                logger.debug("Could not read relationship data_type: %s", e)
+                entry["type"] = "unknown"
+            try:
+                entry["records"] = _records_to_dict(rel)
+            except (hou.OperationFailed, AttributeError) as e:
+                logger.debug("Could not read relationship records: %s", e)
+                entry["records"] = {}
+            found = members.get(entry["name"], {"group": [], "affectors": []})
+            entry["objects_in_group"] = found["group"]
+            entry["objects_in_affectors"] = found["affectors"]
+            relationships.append(entry)
+        except (hou.OperationFailed, hou.ObjectWasDeleted) as e:
+            logger.debug("Could not read a relationship: %s", e)
+            continue
 
     return {
         "node_path": node_path,
