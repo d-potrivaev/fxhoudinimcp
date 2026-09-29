@@ -17,6 +17,7 @@ import hou
 from fxhoudinimcp_server.config import layout_if_enabled, place_new_node
 from fxhoudinimcp_server.dispatcher import register_handler
 from fxhoudinimcp_server.errors import readable_message
+from fxhoudinimcp_server.handlers.node_handlers import _refuse_taken_name
 from fxhoudinimcp_server.ui import set_other_objects
 
 ###### Helpers
@@ -906,7 +907,7 @@ def _setup_vellum_sim(
 
 
 def _create_material(
-    name: str = "material1",
+    name: str | None = None,
     mat_type: str = "principled",
     base_color: list = None,
     roughness: float = 0.5,
@@ -927,6 +928,11 @@ def _create_material(
         opacity: Opacity (0.0 = transparent, 1.0 = opaque).
     """
     mat = _ensure_mat_context()
+    # A name the caller chose is theirs or an error; only the default numbers up.
+    if name:
+        _refuse_taken_name(mat, name)
+    else:
+        name = "material1"
     color = list(base_color[:3]) if base_color is not None and len(base_color) >= 3 else None
 
     if mat_type == "principled":

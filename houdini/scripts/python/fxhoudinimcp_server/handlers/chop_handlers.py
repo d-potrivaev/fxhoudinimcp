@@ -16,6 +16,7 @@ import hou
 from fxhoudinimcp_server.config import layout_if_enabled, place_new_node
 from fxhoudinimcp_server.dispatcher import register_handler
 from fxhoudinimcp_server.errors import readable_message
+from fxhoudinimcp_server.handlers.node_handlers import _refuse_taken_name
 
 ###### Helpers
 
@@ -152,6 +153,8 @@ def _create_chop_node(
         name: Optional name for the new node.
     """
     parent = _get_node(parent_path)
+    if name:
+        _refuse_taken_name(parent, name)
 
     try:
         node = parent.createNode(chop_type, node_name=name)

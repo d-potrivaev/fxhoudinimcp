@@ -16,7 +16,11 @@ import hou
 from fxhoudinimcp_server.config import layout_if_enabled, place_new_node
 from fxhoudinimcp_server.dispatcher import register_handler
 from fxhoudinimcp_server.errors import as_text, readable_message
-from fxhoudinimcp_server.handlers.node_handlers import _component_default, _is_at_default
+from fxhoudinimcp_server.handlers.node_handlers import (
+    _component_default,
+    _is_at_default,
+    _refuse_taken_name,
+)
 
 ###### Helpers
 
@@ -331,6 +335,7 @@ def _create_material_network(
         "materialx": "mtlxstandard_surface",
     }
     actual_type = type_map.get(shader_type, shader_type)
+    _refuse_taken_name(mat_context, name)
 
     try:
         node = mat_context.createNode(actual_type, node_name=name)

@@ -19,6 +19,7 @@ import hou
 # Internal
 from fxhoudinimcp_server.config import layout_if_enabled, place_new_node
 from fxhoudinimcp_server.dispatcher import register_handler
+from fxhoudinimcp_server.handlers.node_handlers import _refuse_taken_name
 
 # USD modules -- may not be available in all Houdini configurations
 try:
@@ -1016,6 +1017,8 @@ def _create_lop_node(
     parent = hou.node(parent_path)
     if parent is None:
         raise hou.OperationFailed(f"Parent node not found: {parent_path}")
+    if name:
+        _refuse_taken_name(parent, name)
 
     node = parent.createNode(lop_type, node_name=name)
 
@@ -1664,6 +1667,8 @@ def _create_light(
         raise hou.OperationFailed(f"Parent node not found: {parent_path}")
 
     lop_type, shape = _lop_light_type(light_type)
+    if name:
+        _refuse_taken_name(parent, name)
     node = parent.createNode(lop_type, node_name=name)
     _set_light_shape(node, shape)
 

@@ -29,9 +29,8 @@ def cache_node(call):
     """A filecache SOP fed by a box, with an explicit output path."""
 
     def _make(out_path: str):
-        geo = call("nodes.create_node", parent_path="/obj", node_type="geo", name="cachegeo")[
-            "node_path"
-        ]
+        # No name: a test makes several, and a requested name that is taken is refused.
+        geo = call("nodes.create_node", parent_path="/obj", node_type="geo")["node_path"]
         node = hou.node(geo)
         box = node.createNode("box")
         cache = node.createNode("filecache")

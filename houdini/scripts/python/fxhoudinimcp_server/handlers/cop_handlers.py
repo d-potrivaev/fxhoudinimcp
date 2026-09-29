@@ -17,6 +17,7 @@ import hou
 from fxhoudinimcp_server.config import layout_if_enabled
 from fxhoudinimcp_server.dispatcher import register_handler
 from fxhoudinimcp_server.errors import readable_message
+from fxhoudinimcp_server.handlers.node_handlers import _refuse_taken_name
 
 logger = logging.getLogger(__name__)
 
@@ -341,6 +342,8 @@ def create_cop_node(
     parent = hou.node(parent_path)
     if parent is None:
         raise ValueError(f"Parent node not found: {parent_path}")
+    if name:
+        _refuse_taken_name(parent, name)
 
     try:
         node = parent.createNode(cop_type, name) if name else parent.createNode(cop_type)

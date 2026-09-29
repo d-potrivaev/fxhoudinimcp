@@ -88,6 +88,8 @@ def create_node(
         position: Optional [x, y] position in the network editor.
     """
     parent = _get_node(parent_path)
+    if name:
+        _refuse_taken_name(parent, name)
 
     try:
         node = parent.createNode(node_type, node_name=name)
@@ -142,6 +144,22 @@ def delete_node(node_path: str) -> dict:
 ###### nodes.rename_node
 
 
+def _refuse_taken_name(parent, name: str, node=None) -> None:
+    """Raise when ``name`` belongs to another child of ``parent``.
+
+    Houdini's own answer to a clash is a silent "name1", which rename, copy and
+    create then reported as success under a name the caller never asked for,
+    so every later call on the requested name hit the other node. build_network
+    already refused; this makes the single-node tools agree.
+    """
+    taken = parent.node(name)
+    if taken is not None and taken != node:
+        raise ValueError(
+            f"'{name}' is already taken in {parent.path()} by {taken.path()}. "
+            f"Rename or delete that node first, or pick another name."
+        )
+
+
 def rename_node(node_path: str, new_name: str) -> dict:
     """Rename an existing node.
 
@@ -151,7 +169,8 @@ def rename_node(node_path: str, new_name: str) -> dict:
     """
     node = _get_node(node_path)
     old_name = node.name()
-    node.setName(new_name, unique_name=True)
+    _refuse_taken_name(node.parent(), new_name, node)
+    node.setName(new_name)
 
     return {
         "success": True,
@@ -196,11 +215,13 @@ def copy_node(
         except (TypeError, ValueError):
             raise ValueError(f"offset must be [dx, dy], got {offset!r}.") from None
         offset = [dx, dy]
+    if new_name:
+        _refuse_taken_name(parent, new_name)
 
     copied = hou.copyNodesTo([node], parent)[0]
 
     if new_name:
-        copied.setName(new_name, unique_name=True)
+        copied.setName(new_name)
 
     if offset is None and parent == node.parent():
         offset = [float(node.size()[0]) + 1.0, 0.0]
