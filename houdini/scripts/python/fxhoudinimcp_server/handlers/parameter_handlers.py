@@ -17,7 +17,7 @@ from typing import Any
 import hou
 
 # Internal
-from fxhoudinimcp_server.callbacks import CallbackError, callback_script, press
+from fxhoudinimcp_server.callbacks import CallbackError, _is_python, callback_script, press
 from fxhoudinimcp_server.dispatcher import register_handler
 from fxhoudinimcp_server.errors import readable_message
 from fxhoudinimcp_server.serialize import geometry_summary
@@ -397,8 +397,10 @@ def _run_callback(parm: hou.Parm) -> dict[str, Any] | None:
     except Exception as exc:
         # The Hscript route goes through pressButton(), which raises
         # hou.OperationFailed ("callback script could not be run") -- after
-        # set() already wrote the value, so the write itself stands.
-        return {"run": False, "route": "hscript", "error": readable_message(exc)}
+        # set() already wrote the value, so the write itself stands. Anything
+        # else unexpected lands here too, so the route is read, not assumed.
+        route = "python" if _is_python(parm) else "hscript"
+        return {"run": False, "route": route, "error": readable_message(exc)}
     return {"run": True, "route": route}
 
 

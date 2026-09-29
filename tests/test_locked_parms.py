@@ -527,6 +527,18 @@ class TestACallbackThatCannotRunIsReported:
         assert info["callback_run"] is False
         assert "could not be run" in info["callback_error"]
 
+    def test_an_unexpected_error_names_the_route_it_came_from(self, monkeypatch):
+        # Not a CallbackError, from a Python callback: the route was reported
+        # as "hscript" whatever the callback's language was.
+        node = _KarmaSettings()
+
+        def broken(*args, **kwargs):
+            raise RuntimeError("press itself broke")
+
+        monkeypatch.setattr(parameters, "press", broken)
+        outcome = parameters._run_callback(node.res_mode)
+        assert outcome == {"run": False, "route": "python", "error": "press itself broke"}
+
 
 class TestTheControllerNamesTheTupleAsAWord:
     def test_a_camel_case_word_counts(self):
