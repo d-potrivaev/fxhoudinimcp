@@ -32,7 +32,7 @@ from fxhoudinimcp_server.outputs import (
     reported_outputs,
     write_verdict,
 )
-from fxhoudinimcp_server.ui import require_ui
+from fxhoudinimcp_server.ui import keep_viewer_state, require_ui
 
 logger = logging.getLogger(__name__)
 
@@ -890,14 +890,14 @@ def render_node_network(
     if network_editor is None:
         raise RuntimeError("No Network Editor pane found.")
 
-    # Navigate to the node's parent network so the node is visible
-    parent = node.parent()
-    if parent is not None:
-        network_editor.cd(parent.path())
-
-    # Frame the node in the editor
-    network_editor.setCurrentNode(node)
-    network_editor.homeToSelection()
+    # Navigate to the node's parent network so the node is visible, and frame
+    # it, keeping the viewer's cameras and the selection.
+    with keep_viewer_state():
+        parent = node.parent()
+        if parent is not None:
+            network_editor.cd(parent.path())
+        network_editor.setCurrentNode(node)
+        network_editor.homeToSelection()
 
     # Capture the network editor as an image via Qt widget grab
     from fxhoudinimcp_server.handlers.viewport_handlers import _capture_pane_tab_qt

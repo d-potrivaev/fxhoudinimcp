@@ -19,13 +19,13 @@ import hou
 from fxhoudinimcp_server.callbacks import CallbackError, press
 from fxhoudinimcp_server.config import (
     auto_layout_enabled,
-    layout_if_enabled,
     mark_placed,
     place_new_node,
 )
 from fxhoudinimcp_server.dispatcher import register_handler
 from fxhoudinimcp_server.errors import readable_message
 from fxhoudinimcp_server.serialize import to_jsonable
+from fxhoudinimcp_server.ui import focus_network_editor as _focus_network_editor
 
 ###### Helpers
 
@@ -46,28 +46,6 @@ def _node_summary(node: hou.Node) -> dict:
         "type": node.type().name(),
         "category": node.type().category().name(),
     }
-
-
-def _focus_network_editor(node: hou.Node, place_unpositioned: bool = True) -> None:
-    """Best-effort: layout the parent network, then pan the editor to *node*.
-
-    Callers that created nothing pass ``place_unpositioned=False``, so a call
-    that only rewires or flips a flag never relocates a node the user parked at
-    the origin.
-    """
-    try:
-        parent = node.parent()
-        if parent is not None:
-            layout_if_enabled(parent, place_unpositioned)
-        for pane_tab in hou.ui.paneTabs():
-            if pane_tab.type() == hou.paneTabType.NetworkEditor:
-                if parent is not None:
-                    pane_tab.cd(parent.path())
-                pane_tab.setCurrentNode(node)
-                pane_tab.homeToSelection()
-                return
-    except Exception:
-        pass  # Never let UI helpers break a tool call
 
 
 ###### nodes.create_node

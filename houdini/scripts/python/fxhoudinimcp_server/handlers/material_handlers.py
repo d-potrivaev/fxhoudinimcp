@@ -13,7 +13,7 @@ from typing import Any
 import hou
 
 # Internal
-from fxhoudinimcp_server.config import layout_if_enabled, place_new_node
+from fxhoudinimcp_server.config import place_new_node
 from fxhoudinimcp_server.dispatcher import register_handler
 from fxhoudinimcp_server.errors import as_text, readable_message
 from fxhoudinimcp_server.handlers.node_handlers import (
@@ -21,6 +21,7 @@ from fxhoudinimcp_server.handlers.node_handlers import (
     _is_at_default,
     _refuse_taken_name,
 )
+from fxhoudinimcp_server.ui import focus_network_editor as _focus_network_editor
 
 ###### Helpers
 
@@ -31,23 +32,6 @@ def _get_node(node_path: str) -> hou.Node:
     if node is None:
         raise ValueError(f"Node not found: {node_path}")
     return node
-
-
-def _focus_network_editor(node: hou.Node) -> None:
-    """Best-effort: layout the parent network, then pan the editor to *node*."""
-    try:
-        parent = node.parent()
-        if parent is not None:
-            layout_if_enabled(parent)
-        for pane_tab in hou.ui.paneTabs():
-            if pane_tab.type() == hou.paneTabType.NetworkEditor:
-                if parent is not None:
-                    pane_tab.cd(parent.path())
-                pane_tab.setCurrentNode(node)
-                pane_tab.homeToSelection()
-                return
-    except Exception:
-        pass
 
 
 _MATERIAL_PARM_HINTS = ("materialpath", "matspecpath", "matpath", "shop_material")

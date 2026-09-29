@@ -17,7 +17,7 @@ import hou
 
 # Internal
 from fxhoudinimcp_server.dispatcher import register_handler
-from fxhoudinimcp_server.ui import require_ui, set_other_objects
+from fxhoudinimcp_server.ui import keep_viewer_state, require_ui, set_other_objects
 
 logger = logging.getLogger(__name__)
 
@@ -755,11 +755,12 @@ def capture_network_editor(
         node = hou.node(node_path)
         if node is None:
             raise ValueError(f"Node not found: {node_path}")
-        parent = node.parent()
-        if parent is not None:
-            network_editor.cd(parent.path())
-        network_editor.setCurrentNode(node)
-        node_bounds = _frame_node(network_editor, node)
+        with keep_viewer_state():
+            parent = node.parent()
+            if parent is not None:
+                network_editor.cd(parent.path())
+            network_editor.setCurrentNode(node)
+            node_bounds = _frame_node(network_editor, node)
 
     # Capture the network editor via Qt widget grab
     _capture_pane_tab_qt(network_editor, output_path)
@@ -821,7 +822,9 @@ def set_current_network(network_path: str, other_objects: str | None = "hide") -
     if network_editor is None:
         raise RuntimeError("No Network Editor pane found.")
 
-    network_editor.cd(network_path)
+    # The viewer follows the editor; its cameras and the selection stay.
+    with keep_viewer_state():
+        network_editor.cd(network_path)
 
     return {
         "success": True,

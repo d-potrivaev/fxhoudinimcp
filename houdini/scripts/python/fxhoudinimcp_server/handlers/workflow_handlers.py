@@ -18,7 +18,7 @@ from fxhoudinimcp_server.config import layout_if_enabled, place_new_node
 from fxhoudinimcp_server.dispatcher import register_handler
 from fxhoudinimcp_server.errors import readable_message
 from fxhoudinimcp_server.handlers.node_handlers import _refuse_taken_name
-from fxhoudinimcp_server.ui import set_other_objects
+from fxhoudinimcp_server.ui import focus_network_editor
 
 ###### Helpers
 
@@ -32,23 +32,12 @@ def _get_node(node_path: str) -> hou.Node:
 
 
 def _focus_network_editor(node: hou.Node, place_unpositioned: bool = True) -> None:
-    """Best-effort: lay out, pan the editor to *node*, hide the other objects."""
-    try:
-        parent = node.parent()
-        if parent is not None:
-            layout_if_enabled(parent, place_unpositioned=place_unpositioned)
-        for pane_tab in hou.ui.paneTabs():
-            if pane_tab.type() == hou.paneTabType.NetworkEditor:
-                if parent is not None:
-                    pane_tab.cd(parent.path())
-                pane_tab.setCurrentNode(node)
-                pane_tab.homeToSelection()
-                # The viewer follows into the new object; the source object and
-                # the rest of the scene would otherwise draw over the sim.
-                set_other_objects("hide")
-                return
-    except Exception:
-        pass
+    """Best-effort: lay out, pan the editor to *node*, hide the other objects.
+
+    The viewer follows into the new object; the source object and the rest of
+    the scene would otherwise draw over the sim.
+    """
+    focus_network_editor(node, place_unpositioned, other_objects="hide")
 
 
 def _ensure_obj_context() -> hou.Node:

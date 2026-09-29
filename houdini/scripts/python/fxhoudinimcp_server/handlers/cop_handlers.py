@@ -14,10 +14,10 @@ import logging
 import hou
 
 # Internal
-from fxhoudinimcp_server.config import layout_if_enabled
 from fxhoudinimcp_server.dispatcher import register_handler
 from fxhoudinimcp_server.errors import readable_message
 from fxhoudinimcp_server.handlers.node_handlers import _refuse_taken_name
+from fxhoudinimcp_server.ui import focus_network_editor as _focus_network_editor
 
 logger = logging.getLogger(__name__)
 
@@ -49,23 +49,6 @@ def _get_cop_node(node_path: str) -> hou.Node:
         f"{node_path} is a {category} node ({node.type().name()}), not a COP. "
         f"COP tools work on nodes inside a copnet or /img."
     )
-
-
-def _focus_network_editor(node: hou.Node) -> None:
-    """Best-effort: layout the parent network, then pan the editor to *node*."""
-    try:
-        parent = node.parent()
-        if parent is not None:
-            layout_if_enabled(parent)
-        for pane_tab in hou.ui.paneTabs():
-            if pane_tab.type() == hou.paneTabType.NetworkEditor:
-                if parent is not None:
-                    pane_tab.cd(parent.path())
-                pane_tab.setCurrentNode(node)
-                pane_tab.homeToSelection()
-                return
-    except Exception:
-        pass
 
 
 ###### cops.get_cop_info

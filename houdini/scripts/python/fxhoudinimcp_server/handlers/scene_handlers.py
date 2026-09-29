@@ -16,7 +16,6 @@ import hou
 # Internal
 from fxhoudinimcp_server.callbacks import press
 from fxhoudinimcp_server.config import (
-    layout_if_enabled,
     require_inside_project_root,
     update_mode_name,
 )
@@ -27,25 +26,9 @@ from fxhoudinimcp_server.outputs import (
     reported_outputs,
     write_verdict,
 )
+from fxhoudinimcp_server.ui import focus_network_editor as _focus_network_editor
 
 ###### Helpers
-
-
-def _focus_network_editor(node: hou.Node) -> None:
-    """Best-effort: layout the parent network, then pan the editor to *node*."""
-    try:
-        parent = node.parent()
-        if parent is not None:
-            layout_if_enabled(parent)
-        for pane_tab in hou.ui.paneTabs():
-            if pane_tab.type() == hou.paneTabType.NetworkEditor:
-                if parent is not None:
-                    pane_tab.cd(parent.path())
-                pane_tab.setCurrentNode(node)
-                pane_tab.homeToSelection()
-                return
-    except Exception:
-        pass
 
 
 # Extensions that are really two, so the frame number belongs before both.

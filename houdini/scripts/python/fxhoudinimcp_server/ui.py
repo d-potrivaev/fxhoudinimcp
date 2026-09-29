@@ -16,8 +16,15 @@ a detail of the search: with no UI at all there are no panes to look through.
 
 from __future__ import annotations
 
+# Built-in
+import contextlib
+from collections.abc import Iterator
+
 # Third-party
 import hou
+
+# Internal
+from fxhoudinimcp_server.config import layout_if_enabled
 
 
 def ui_available() -> bool:
@@ -85,3 +92,93 @@ def set_other_objects(mode: str | None) -> str | None:
     except Exception:
         return applied
     return applied
+
+
+def _restore_cameras(cameras: list) -> None:
+    """Bind each recorded (viewer, view name, camera path) again where it changed."""
+    for tab, name, path in cameras:
+        with contextlib.suppress(Exception):
+            viewport = next(v for v in tab.viewports() if v.name() == name)
+            current = viewport.camera()
+            now = current.path() if current is not None else viewport.cameraPath()
+            if now != path:
+                viewport.setCamera(hou.node(path) or path)
+
+
+@contextlib.contextmanager
+def keep_viewer_state() -> Iterator[None]:
+    """Keep every view's camera and the node selection across a network editor move.
+
+    The Scene Viewer follows the network editor, and a ``cd`` to another level
+    unbinds each view's camera and selects that network's current node
+    (measured on 22.0.429): set_current_network lost a camera set one call
+    earlier, and set_node_flags left the object selected, so the next viewport
+    capture drew it in the selection colour. Leaving a LOP network unbinds the
+    camera once more on the next UI tick, after the call has returned, so the
+    cameras are bound again then too.
+
+    Best effort: nothing here raises, and a state the move left untouched is
+    not written back.
+    """
+    cameras: list = []
+    selected: list = []
+    with contextlib.suppress(Exception):
+        selected = list(hou.selectedNodes())
+    with contextlib.suppress(Exception):
+        for tab in hou.ui.paneTabs():
+            if tab.type() != hou.paneTabType.SceneViewer:
+                continue
+            for viewport in tab.viewports():
+                path = None
+                with contextlib.suppress(Exception):
+                    camera = viewport.camera()
+                    # A USD camera prim is a path, not a node.
+                    path = camera.path() if camera is not None else viewport.cameraPath()
+                if path:
+                    cameras.append((tab, viewport.name(), path))
+    try:
+        yield
+    finally:
+        _restore_cameras(cameras)
+        if cameras:
+            with contextlib.suppress(Exception):
+                import hdefereval
+
+                hdefereval.executeDeferred(lambda: _restore_cameras(cameras))
+        with contextlib.suppress(Exception):
+            before = sorted(node.path() for node in selected)
+            if sorted(node.path() for node in hou.selectedNodes()) != before:
+                hou.clearAllSelected()
+                for node in selected:
+                    node.setSelected(True, clear_all_selected=False)
+
+
+def focus_network_editor(
+    node: hou.Node,
+    place_unpositioned: bool = True,
+    other_objects: str | None = None,
+) -> None:
+    """Best-effort: lay out *node*'s network, then pan the network editor to *node*.
+
+    The handlers that create or rewire a node end here. Callers that created
+    nothing pass ``place_unpositioned=False``, so a call that only rewires or
+    flips a flag never relocates a node the user parked at the origin.
+    *other_objects* goes to set_other_objects once the editor has moved. The
+    viewer's cameras and the selection survive the move (keep_viewer_state).
+    """
+    try:
+        parent = node.parent()
+        if parent is not None:
+            layout_if_enabled(parent, place_unpositioned)
+        with keep_viewer_state():
+            for pane_tab in hou.ui.paneTabs():
+                if pane_tab.type() == hou.paneTabType.NetworkEditor:
+                    if parent is not None:
+                        pane_tab.cd(parent.path())
+                    pane_tab.setCurrentNode(node)
+                    pane_tab.homeToSelection()
+                    if other_objects is not None:
+                        set_other_objects(other_objects)
+                    return
+    except Exception:
+        pass  # Never let UI helpers break a tool call

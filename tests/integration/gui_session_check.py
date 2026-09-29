@@ -168,6 +168,25 @@ async def main() -> int:
         else:
             record("FAIL", "set_viewport_camera (OBJ)", str(bound)[:100])
 
+        # The viewer follows the network editor, and a cd into an object used to
+        # unbind the camera just set and select the object's current node.
+        def selection(reply: dict | None) -> list:
+            return sorted(node["path"] for node in (reply or {}).get("nodes", []))
+
+        selected_before = selection(await call("context.get_selection", soft=True))
+        await call("viewport.set_current_network", network_path="/obj", other_objects=None)
+        await call("viewport.set_current_network", network_path=container, other_objects=None)
+        kept = await call("viewport.get_viewport_info", soft=True) or {}
+        selected_after = selection(await call("context.get_selection", soft=True))
+        if kept.get("camera_path") == obj_cam["node_path"] and selected_after == selected_before:
+            record("PASS", "set_current_network keeps the camera and the selection")
+        else:
+            record(
+                "FAIL",
+                "set_current_network changed the viewer",
+                f"camera {kept.get('camera_path')}, selection {selected_before} -> {selected_after}",
+            )
+
         ###### Solaris: the case that could not be done at all before
         stage_built = await call(
             "graph.build_network",
