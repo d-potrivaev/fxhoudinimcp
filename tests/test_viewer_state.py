@@ -49,6 +49,9 @@ class _FakeNode:
     def parent(self):
         return self._parent
 
+    def childTypeCategory(self):  # noqa: N802
+        return "Lop" if self._path.startswith("/stage") else "Object"
+
 
 class _FakeView:
     """A view bound to a camera node, a USD camera prim path, or nothing."""
@@ -86,15 +89,19 @@ class _Houdini:
         viewer = MagicMock()
         viewer.type.return_value = "SceneViewer"
         viewer.viewports.return_value = views
+        viewer.pwd.side_effect = lambda: _FakeNode(self.pwd)
         self.editor = MagicMock()
         self.editor.type.return_value = "NetworkEditor"
         self.editor.cd.side_effect = self._cd
         self.editor.setCurrentNode.side_effect = self._make_current
+        self.editor.pwd.side_effect = lambda: _FakeNode(self.pwd)
+        self.pwd = "/obj"
         self.panes = [viewer, self.editor]
 
     def _cd(self, path):
         # What 22.0.429 does: every view drops its camera, and the network's
         # current node becomes the selection.
+        self.pwd = path
         for view in self.views:
             view.unbind()
         network = self.known.get(path)
@@ -108,16 +115,18 @@ class _Houdini:
 @pytest.fixture
 def houdini(monkeypatch):
     cam = _FakeNode("/obj/cam1")
-    box = _FakeNode("/obj/geo1")
-    sphere = _FakeNode("/obj/g/sphere1")
-    g = _FakeNode("/obj/g", parent=_FakeNode("/obj"), current=sphere)
+    g = _FakeNode("/obj/g", parent=_FakeNode("/obj"))
+    box = _FakeNode("/obj/geo1", parent=_FakeNode("/obj"))
+    sphere = _FakeNode("/obj/g/sphere1", parent=g)
+    picked = _FakeNode("/obj/g/box1", parent=g)
+    g.current = sphere
     views = [
         _FakeView("persp1", camera=cam),
         _FakeView("top1"),
         _FakeView("front1", prim="/cameras/shot"),
     ]
-    known = {node.path(): node for node in (cam, box, sphere, g)}
-    state = _Houdini(views, known, [box])
+    known = {node.path(): node for node in (cam, box, sphere, picked, g)}
+    state = _Houdini(views, known, [picked])
     hou = ui.hou
     monkeypatch.setattr(hou.paneTabType, "SceneViewer", "SceneViewer", raising=False)
     monkeypatch.setattr(hou.paneTabType, "NetworkEditor", "NetworkEditor", raising=False)
@@ -126,6 +135,7 @@ def houdini(monkeypatch):
     monkeypatch.setattr(hou, "clearAllSelected", state.selection.clear, raising=False)
     monkeypatch.setattr(hou, "node", known.get, raising=False)
     monkeypatch.setattr(hou, "isUIAvailable", lambda: True, raising=False)
+    monkeypatch.setattr(hou, "lopNodeTypeCategory", lambda: "Lop", raising=False)
     monkeypatch.setattr(sys.modules["hdefereval"], "executeDeferred", state.deferred.append)
     monkeypatch.setattr(ui, "layout_if_enabled", lambda *a, **k: None)
     for node in known.values():
@@ -159,7 +169,17 @@ class TestKeepViewerState:
     def test_the_selection_the_move_made_is_undone(self, houdini):
         with ui.keep_viewer_state():
             houdini.editor.cd("/obj/g")
-        assert [node.path() for node in houdini.selection] == ["/obj/geo1"]
+        assert [node.path() for node in houdini.selection] == ["/obj/g/box1"]
+
+    def test_a_selection_outside_the_new_network_is_not_selected_again(self, houdini):
+        # Houdini's editor follows a selected node to its network on the next
+        # UI tick: re-selecting /obj/geo1 sent the editor back from /obj/g to
+        # /obj after set_current_network had answered /obj/g (22.0.368).
+        houdini.selection[:] = [houdini.known["/obj/geo1"]]
+        with ui.keep_viewer_state():
+            houdini.editor.cd("/obj/g")
+        assert houdini.selection == []
+        assert _cameras(houdini) == _BOUND
 
     def test_an_undisturbed_viewer_is_not_written_to(self, houdini, monkeypatch):
         cleared = []
@@ -191,7 +211,7 @@ class TestKeepViewerState:
             houdini.editor.cd("/obj/g")
             raise RuntimeError("the move failed half way")
         assert _cameras(houdini) == _BOUND
-        assert [node.path() for node in houdini.selection] == ["/obj/geo1"]
+        assert [node.path() for node in houdini.selection] == ["/obj/g/box1"]
 
 
 class TestNavigationKeepsTheViewer:
@@ -199,7 +219,7 @@ class TestNavigationKeepsTheViewer:
         viewport.set_current_network("/obj/g", other_objects=None)
         houdini.editor.cd.assert_called_once_with("/obj/g")
         assert _cameras(houdini) == _BOUND
-        assert [node.path() for node in houdini.selection] == ["/obj/geo1"]
+        assert [node.path() for node in houdini.selection] == ["/obj/g/box1"]
 
     def test_focusing_a_node_keeps_the_camera_and_the_selection(self, houdini):
         # set_node_flags, connect_nodes and create_node all end here.
@@ -208,7 +228,7 @@ class TestNavigationKeepsTheViewer:
         nodes._focus_network_editor(sphere, place_unpositioned=False)
         houdini.editor.setCurrentNode.assert_called_once_with(sphere)
         assert _cameras(houdini) == _BOUND
-        assert [node.path() for node in houdini.selection] == ["/obj/geo1"]
+        assert [node.path() for node in houdini.selection] == ["/obj/g/box1"]
 
     def test_the_sim_setups_still_hide_the_other_objects(self, houdini, monkeypatch):
         hidden = []

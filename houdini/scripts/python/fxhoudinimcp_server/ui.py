@@ -146,11 +146,23 @@ def keep_viewer_state() -> Iterator[None]:
 
                 hdefereval.executeDeferred(lambda: _restore_cameras(cameras))
         with contextlib.suppress(Exception):
-            before = sorted(node.path() for node in selected)
-            if sorted(node.path() for node in hou.selectedNodes()) != before:
-                hou.clearAllSelected()
-                for node in selected:
-                    node.setSelected(True, clear_all_selected=False)
+            now = sorted(node.path() for node in hou.selectedNodes())
+            if now != sorted(node.path() for node in selected):
+                # The editor follows a selected node to its network on the next
+                # UI tick (22.0.368): selecting one outside the network the
+                # editor moved to pulled it back, and set_current_network
+                # answered for a network the editor had already left. Only the
+                # nodes in that network are selected again.
+                shown = {
+                    tab.pwd().path()
+                    for tab in hou.ui.paneTabs()
+                    if tab.type() == hou.paneTabType.NetworkEditor
+                }
+                keep = [n for n in selected if not shown or n.parent().path() in shown]
+                if now != sorted(node.path() for node in keep):
+                    hou.clearAllSelected()
+                    for node in keep:
+                        node.setSelected(True, clear_all_selected=False)
 
 
 def focus_network_editor(
