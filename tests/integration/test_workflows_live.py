@@ -7,6 +7,9 @@ claim in the returned dict is checked against the live scene.
 
 from __future__ import annotations
 
+# Built-in
+import struct
+
 # Third-party
 import hou
 import pytest
@@ -149,3 +152,27 @@ class TestSetupRender:
         assert 640 in applied, (
             f"resolution [640, 480] claimed in result but not found on ROP or camera: {data}"
         )
+
+    def test_karma_render_has_the_requested_size(self, call, tmp_path):
+        """The reply said 64x36; the Karma ROP rendered its own 1280x720."""
+        geo = call("nodes.create_node", parent_path="/obj", node_type="geo", name="subject")[
+            "node_path"
+        ]
+        call("nodes.create_node", parent_path=geo, node_type="sphere")
+        out = str(tmp_path / "frame.png").replace("\\", "/")
+        data = call(
+            "workflow.setup_render",
+            renderer="karma",
+            resolution=[64, 36],
+            samples=1,
+            output_path=out,
+            name="sized",
+        )
+
+        result = call("rendering.start_render", node_path=data["rop_path"], frame_range=[1, 1])
+
+        assert result["success"] and result["wrote_files"], result
+        with open(out, "rb") as fh:
+            header = fh.read(24)
+        width, height = struct.unpack(">II", header[16:24])
+        assert (width, height) == (64, 36), f"asked for 64x36, image is {width}x{height}"
