@@ -10,6 +10,7 @@ from fxhoudinimcp._sdk import Context
 
 # Internal
 from fxhoudinimcp._types import Value
+from fxhoudinimcp.bridge import NO_TIMEOUT
 from fxhoudinimcp.server import _get_bridge, mcp
 
 
@@ -343,9 +344,12 @@ async def find_nearest_point(
 @mcp.tool()
 async def get_attrib_stats(
     ctx: Context,
-    node_path: str,
+    node_path: str | None = None,
     attribs: list[str] | None = None,
     attrib_class: str = "point",
+    frames: list[float] | None = None,
+    node_paths: list[str] | None = None,
+    percentiles: list[float] | None = None,
 ) -> dict:
     """Aggregate statistics for numeric attributes: min, max, mean, sum.
 
@@ -360,11 +364,28 @@ async def get_attrib_stats(
         attribs: Attribute names. Omit for every attribute of the class.
         attrib_class: "point", "prim", "vertex" (uv and N usually live
             there) or "detail".
+        frames: Measure at each of these frames: a row per node per frame,
+            frames cooked in increasing order, the current frame put back.
+            element_count is the point count and P's per-component min/max
+            the bounds, so a sim's count and spread over time is ONE call.
+        node_paths: Several nodes (variants) in the same call, instead of
+            node_path.
+        percentiles: e.g. [5, 50, 95] for the distribution (50 = median).
     """
     bridge = _get_bridge(ctx)
-    params: dict[str, Any] = {"node_path": node_path, "attrib_class": attrib_class}
-    if attribs is not None:
-        params["attribs"] = attribs
+    params: dict[str, Any] = {"attrib_class": attrib_class}
+    for key, value in (
+        ("node_path", node_path),
+        ("attribs", attribs),
+        ("frames", frames),
+        ("node_paths", node_paths),
+        ("percentiles", percentiles),
+    ):
+        if value is not None:
+            params[key] = value
+    if frames or node_paths:
+        # Several frames of a simulation cook as long as they take.
+        return await bridge.execute("geometry.get_attrib_stats", params, timeout=NO_TIMEOUT)
     return await bridge.execute("geometry.get_attrib_stats", params)
 
 
