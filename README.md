@@ -39,7 +39,7 @@
 <!-- ABOUT -->
 ## About
 
-An [MCP](https://modelcontextprotocol.io/) server for [SideFX Houdini](https://www.sidefx.com/): it lets an AI assistant such as Claude build networks, set up simulations, inspect USD stages and render, through Houdini's own Python API.
+An [MCP](https://modelcontextprotocol.io/) server for [SideFX Houdini](https://www.sidefx.com/): it lets an AI assistant build networks, set up simulations, inspect USD stages and render, through Houdini's own Python API. It works with any MCP client: Claude, Codex, Copilot, Gemini, Cursor, Windsurf, VS Code, Cline and others.
 
 **215 tools**, **8 resources**, and **9 prompts** serving **31 written workflow guides** out of the box.
 
@@ -77,9 +77,9 @@ An [MCP](https://modelcontextprotocol.io/) server for [SideFX Houdini](https://w
 flowchart LR
     subgraph Client[" 🤖 AI Client "]
         direction TB
-        A1("Claude Desktop")
-        A2("Cursor / VS Code")
-        A3("Claude Code")
+        A1("Claude · Codex · Copilot · Gemini")
+        A2("Cursor · Windsurf · VS Code · Cline")
+        A3("any stdio MCP client")
     end
 
     subgraph MCP[" ⚡ FXHoudini MCP Server "]
@@ -180,21 +180,15 @@ Don't type the plugin path by hand: it moves whenever the Python environment doe
   "path": "$FXHOUDINIMCP" }
 ```
 
-**2. Point your MCP client at the server**, with the absolute path of the Python that has `fxhoudinimcp` (`python -c "import sys; print(sys.executable)"`). Clients don't inherit your shell's PATH, and a bare `python` just shows as "disconnected".
+**2. Point your MCP client at the server.** Every client runs the same command, `<python> -m fxhoudinimcp`, where `<python>` is the absolute path of the Python that has `fxhoudinimcp` (`python -c "import sys; print(sys.executable)"`). Clients don't inherit your shell's PATH, and a bare `python` just shows as "disconnected".
 
-Claude Code:
-
-```shell
-claude mcp add --scope user fxhoudini -- "C:\Program Files\Python311\python.exe" -m fxhoudinimcp
-```
-
-Claude Desktop (`claude_desktop_config.json`, then quit from the system tray and relaunch):
+CLI clients register it with their own command. File-based clients take this entry in their config file:
 
 ```json
 {
   "mcpServers": {
     "fxhoudini": {
-      "command": "C:\\Program Files\\Python311\\python.exe",
+      "command": "C:\Program Files\Python311\python.exe",
       "args": ["-m", "fxhoudinimcp"]
     }
   }
@@ -203,9 +197,11 @@ Claude Desktop (`claude_desktop_config.json`, then quit from the system tray and
 
 | Client | Register with | Remove with |
 | --- | --- | --- |
+| Claude Code | `claude mcp add --scope user fxhoudini -- <python> -m fxhoudinimcp` | `claude mcp remove fxhoudini -s user` |
 | Codex | `codex mcp add fxhoudini -- <python> -m fxhoudinimcp` | `codex mcp remove fxhoudini` |
 | Copilot CLI | `copilot mcp add fxhoudini -- <python> -m fxhoudinimcp` | `copilot mcp remove fxhoudini` |
 | Gemini CLI | `gemini mcp add -s user fxhoudini <python> -m fxhoudinimcp` | `gemini mcp remove -s user fxhoudini` |
+| Claude Desktop | `claude_desktop_config.json` in the app-data `Claude/` folder, key `mcpServers`; quit from the tray and relaunch | delete the entry |
 | Cursor | `~/.cursor/mcp.json`, key `mcpServers` | delete the entry |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json`, key `mcpServers` | delete the entry |
 | VS Code | user `mcp.json` (**MCP: Open User Configuration**), key `servers`, entry gets `"type": "stdio"` | delete the entry |
