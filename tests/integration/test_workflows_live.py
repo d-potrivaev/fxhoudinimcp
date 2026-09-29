@@ -169,9 +169,17 @@ class TestSetupRender:
             name="sized",
         )
 
+        # The Karma LOP inside the ROP reads ch("../../resolutionx/y") and nothing
+        # reads res_override*, so this is the size husk gets. Checked before the
+        # render so a machine without a Karma licence still catches the bug.
+        rop = hou.node(data["rop_path"])
+        assert (rop.evalParm("resolutionx"), rop.evalParm("resolutiony")) == (64, 36)
+
         result = call("rendering.start_render", node_path=data["rop_path"], frame_range=[1, 1])
 
-        assert result["success"] and result["wrote_files"], result
+        if not result["success"]:
+            pytest.skip(f"karma render unavailable here: {str(result.get('error'))[:80]}")
+        assert result["wrote_files"], result
         with open(out, "rb") as fh:
             header = fh.read(24)
         width, height = struct.unpack(">II", header[16:24])
