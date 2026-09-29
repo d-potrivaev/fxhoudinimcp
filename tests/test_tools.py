@@ -7,10 +7,16 @@ import pytest
 from support import tool_input_schema
 
 # Internal
+from fxhoudinimcp.bridge import NO_TIMEOUT
 from fxhoudinimcp.errors import ConnectionError as HoudiniConnectionError
 from fxhoudinimcp.tools.code import execute_python, set_update_mode
 from fxhoudinimcp.tools.materials import list_materials
-from fxhoudinimcp.tools.nodes import create_network_box, create_node, set_object_transform
+from fxhoudinimcp.tools.nodes import (
+    create_network_box,
+    create_node,
+    press_button,
+    set_object_transform,
+)
 from fxhoudinimcp.tools.scene import (
     get_houdini_connection_status,
     get_scene_info,
@@ -130,6 +136,17 @@ class TestNodeTools:
             "nodes.create_node",
             {"parent_path": "/obj", "node_type": "geo", "name": "my_geo", "position": [0, 0]},
         )
+
+    @pytest.mark.asyncio
+    async def test_press_button_sends_action_only_when_asked(self, mock_ctx, mock_bridge):
+        await press_button(mock_ctx, node_path="/obj/d/pf", parm_name="expr")
+        await press_button(mock_ctx, node_path="/obj/d/pf", parm_name="expr", action=True)
+        sent = [call.args[1] for call in mock_bridge.execute.call_args_list]
+        assert sent == [
+            {"node_path": "/obj/d/pf", "parm_name": "expr"},
+            {"node_path": "/obj/d/pf", "parm_name": "expr", "action": True},
+        ]
+        assert mock_bridge.execute.call_args.kwargs == {"timeout": NO_TIMEOUT}
 
 
 class TestCodeTools:

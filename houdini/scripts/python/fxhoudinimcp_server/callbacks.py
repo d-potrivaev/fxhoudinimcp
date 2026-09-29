@@ -21,6 +21,11 @@ What was measured per route, in a GUI session:
   ``script_value0`` and ``script_multiparm_index`` / ``_nesting`` as strings
   ('-1', '0'), with the caller's arguments merged in; ``hou.pwd()`` is the
   node while it runs. Its exception comes back as CallbackError.
+
+A field's action button (the small button beside a VEXpression field that
+creates spare parameters from its ch() calls) is not a callback at all: it
+is the parm template's ``script_action`` tag, and ``pressButton()`` does not
+run it. ``run_action`` executes it here the same way.
 """
 
 from __future__ import annotations
@@ -115,6 +120,32 @@ def exec_python_callback(parm: hou.Parm, script: str, kwargs: dict[str, Any]) ->
     finally:
         with contextlib.suppress(Exception):
             hou.setPwd(previous)
+
+
+def action_script(parm: hou.Parm) -> str:
+    """The Python of the parm's action button (tag ``script_action``); "" if none."""
+    with contextlib.suppress(Exception):
+        script = parm.parmTemplate().tags().get("script_action")
+        if isinstance(script, str):
+            return script
+    return ""
+
+
+def run_action(parm: hou.Parm, arguments: dict | None = None) -> None:
+    """Run the parm's action button as a click on it would; CallbackError if it raises.
+
+    Action scripts read ``kwargs["node"]``, ``kwargs["parmtuple"]`` (the
+    prim pickers in loputils take the parm from it) and the modifier keys of
+    the click (``shift``), which are all up here. The callback kwargs are
+    passed too, and the caller's arguments are merged in last.
+    """
+    kwargs = _callback_kwargs(parm, None)
+    with contextlib.suppress(Exception):
+        kwargs["parmtuple"] = parm.tuple()
+    for key in ("shift", "ctrl", "alt", "cmd"):
+        kwargs[key] = False
+    kwargs.update(arguments or {})
+    exec_python_callback(parm, action_script(parm), kwargs)
 
 
 def press(parm: hou.Parm, arguments: dict | None = None) -> str:

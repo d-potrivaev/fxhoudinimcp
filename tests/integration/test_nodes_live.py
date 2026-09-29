@@ -209,6 +209,30 @@ class TestPressButton:
         )
         assert "items" in error["message"] and "list" in error["message"]
 
+    def test_a_field_action_button_runs_only_with_action_true(self, call):
+        # A VEXpression field has no callback; its "Create spare parameters"
+        # button is the parm's script_action. Pressing the field did nothing
+        # and answered success.
+        force = hou.node("/obj").createNode("dopnet").createNode("popforce")
+        force.parm("localnoiseexpression").set("amp = ch('amp2');")
+        error = call(
+            "nodes.press_button",
+            node_path=force.path(),
+            parm_name="localnoiseexpression",
+            expect_error=True,
+        )
+        assert "does nothing" in error["message"] and "action=True" in error["message"]
+        assert force.parm("amp2") is None
+
+        data = call(
+            "nodes.press_button",
+            node_path=force.path(),
+            parm_name="localnoiseexpression",
+            action=True,
+        )
+        assert data["callback_route"] == "action"
+        assert force.parm("amp2") is not None
+
 
 class TestSubnetInputConnectors:
     def _subnet(self):
