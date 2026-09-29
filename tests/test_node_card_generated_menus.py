@@ -182,3 +182,83 @@ class TestTheCardReadsGeneratedMenus:
         second_root.createNode.assert_not_called()
         assert card["parms"][0]["menu"] == list(LOADTYPE_ITEMS)
         assert card["parms"][0]["menu_source"] == "generator"
+
+
+def _string_template(menu_type=None, tags=None):
+    template = MagicMock()
+    template.type.return_value = hou.parmTemplateType.String
+    template.menuType.return_value = hou.menuType.Normal if menu_type is None else menu_type
+    template.tags.return_value = dict(tags or {})
+    return template
+
+
+class TestWhichMenusAreStrict:
+    """Houdini refuses an off-menu value only on a Menu parm (measured on 22.0.429).
+
+    A String parm with a normal menu takes any text. Its tokens are still
+    checked (a typo there writes a value nothing reads), except on a code
+    field, whose menu only inserts snippets: a popforce's VEXpression was
+    refused by build_network as "not a menu item" though Houdini takes it.
+    """
+
+    def test_a_menu_parm_is_strict(self):
+        template = MagicMock()
+        template.type.return_value = hou.parmTemplateType.Menu
+        assert graph._is_strict_menu(template)
+
+    def test_a_string_choice_menu_is_still_checked(self):
+        assert graph._is_strict_menu(_string_template())
+
+    def test_a_code_field_with_a_snippet_menu_is_free_text(self):
+        vexpression = _string_template(tags={"editor": "1", "editorlang": "vex"})
+        assert not graph._is_strict_menu(vexpression)
+
+    def test_a_replace_menu_is_free_text(self):
+        assert not graph._is_strict_menu(_string_template(menu_type="replace"))
+
+    def test_unreadable_tags_keep_the_menu_strict(self):
+        template = _string_template()
+        template.tags.side_effect = RuntimeError("no tags")
+        assert graph._is_strict_menu(template)
+
+
+class TestBuildNetworkTakesCodeInASnippetField:
+    def _network(self, monkeypatch):
+        code = _parm("localnoiseexpression", ("amp = 1;", "offset = @P;"), generator="x")
+        code.parmTemplate.return_value = _string_template(tags={"editor": "1"})
+        mode = _parm("mode", ("velocity", "force"))
+        probe = _probe([code, mode])
+        probe.parmTuples.return_value = []
+        for parm in (code, mode):
+            parm.expression.return_value = ""
+        parent = MagicMock()
+        parent.path.return_value = "/obj/dopnet1"
+        parent.children.return_value = []
+        parent.displayNode.return_value = None
+        parent.renderNode.return_value = None
+        parent.childTypeCategory.return_value.name.return_value = "Dop"
+        parent.createNode.return_value = probe
+        node_type = MagicMock()
+        node_type.name.return_value = "popforce"
+        node_type.maxNumInputs.return_value = 4
+        node_type.definition.return_value = None
+        monkeypatch.setattr(graph, "_PARM_PROBE_CACHE", {})
+        monkeypatch.setattr(hou, "node", lambda path: parent if path == parent.path() else None)
+        monkeypatch.setattr(graph, "_resolve_node_type", lambda cat, name: node_type)
+        monkeypatch.setattr(graph, "_instance_patterns", lambda t: [])
+
+    def _dry(self, parms):
+        return graph.build_network(
+            "/obj/dopnet1", [{"type": "popforce", "name": "pf", "parms": parms}], dry_run=True
+        )
+
+    def test_the_vexpression_validates(self, monkeypatch):
+        self._network(monkeypatch)
+        result = self._dry({"localnoiseexpression": "offset.x = @id;"})
+        assert result["valid"] is True, result
+
+    def test_a_typo_in_a_menu_token_is_still_caught(self, monkeypatch):
+        self._network(monkeypatch)
+        result = self._dry({"mode": "velocty"})
+        assert result["valid"] is False
+        assert "'velocty' is not a menu item" in result["errors"][0]

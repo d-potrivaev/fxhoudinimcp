@@ -66,6 +66,16 @@ class TestBuildNetworkValidation:
         assert any(t.startswith("copytopoints") for t in result["validated_types"])
         assert len(hou.node(geo).children()) == 0
 
+    def test_a_code_field_takes_text_its_snippet_menu_does_not_list(self, call):
+        # A popforce's VEXpression is a String parm with a normal menu of
+        # snippets; Houdini takes any text there, so validation must too.
+        dopnet = hou.node("/obj").createNode("dopnet")
+        code = "offset.x = @id;"
+        spec = {"type": "popforce", "name": "pf", "parms": {"localnoiseexpression": code}}
+        result = call("graph.build_network", parent_path=dopnet.path(), nodes=[spec])
+        assert result["success"] is True, result.get("errors")
+        assert dopnet.node("pf").parm("localnoiseexpression").unexpandedString() == code
+
 
 class TestBuildNetworkBuild:
     def test_full_network_in_one_call_with_evidence(self, call, geo):
