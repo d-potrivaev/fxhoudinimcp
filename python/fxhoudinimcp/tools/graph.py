@@ -45,7 +45,8 @@ async def build_network(
         source names — earlier spec names, existing children, or absolute
         paths; or dicts with index or input_name / source / source_output,
         where input_name is a connector name or label as get_node_card
-        lists them; or {"indirect_input": n} to wire from connector n of
+        lists them and source_output an output index or name ("v", "P");
+        or {"indirect_input": n} to wire from connector n of
         the parent subnet itself), flags (display/render/bypass/template),
         color [r,g,b], comment, override_expression, run_callbacks. Parms
         are written in the order given.

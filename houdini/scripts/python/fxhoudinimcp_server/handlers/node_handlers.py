@@ -675,6 +675,43 @@ def _find_input(inputs: list[dict[str, Any]], input_name: str, max_inputs: int =
     raise ValueError(f"has no input named '{input_name}'.{hint}")
 
 
+def _find_output(outputs: list[dict[str, Any]], output_name: str) -> int:
+    """Index of the output called *output_name*: names first, then labels.
+
+    The output-side twin of _find_input, used by build_network's dry run and
+    by its wiring, so the two cannot disagree about what a name means.
+    """
+    for key in ("name", "label"):
+        for entry in outputs:
+            if entry.get(key) == output_name:
+                return int(entry["index"])
+    candidates: list[str] = []
+    for entry in outputs:
+        for value in (entry.get("name"), entry.get("label")):
+            if value and value not in candidates:
+                candidates.append(value)
+    close = get_close_matches(output_name, candidates, n=3, cutoff=0.4)
+    if close:
+        hint = f" Did you mean: {close}?"
+    else:
+        hint = f" Outputs: {candidates[:15] + (['...'] if len(candidates) > 15 else [])}"
+    raise ValueError(f"has no output named '{output_name}'.{hint}")
+
+
+def _output_index(source: hou.Node, source_output: int | str) -> int:
+    """*source_output* as an index on the live *source*: an index, or an output name."""
+    if isinstance(source_output, int):
+        return source_output
+    outputs = [{"index": i, "name": name} for i, name in enumerate(source.outputNames())]
+    with contextlib.suppress(Exception):
+        for entry, label in zip(outputs, source.outputLabels(), strict=False):
+            entry["label"] = label
+    try:
+        return _find_output(outputs, source_output)
+    except ValueError as exc:
+        raise ValueError(f"{source.path()} {exc}") from None
+
+
 def _resolve_input_index(dest: hou.Node, input_index: int, input_name: str | None) -> int:
     """Turn an input name (VOP connector such as "base_color") into its index.
 

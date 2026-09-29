@@ -35,8 +35,10 @@ from fxhoudinimcp_server.dispatcher import register_handler
 from fxhoudinimcp_server.errors import readable_message
 from fxhoudinimcp_server.handlers.node_handlers import (
     _find_input,
+    _find_output,
     _indirect_input_item,
     _input_table,
+    _output_index,
     _resolve_input_index,
 )
 from fxhoudinimcp_server.handlers.parameter_handlers import (
@@ -709,6 +711,20 @@ def _set_parm_value(name: str, parm, parm_tuple, value: Any) -> None:
         raise ValueError(f"parameter '{name}' not found")
 
 
+def _source_output(value: Any) -> int | str:
+    """An output index, or an output name to be resolved against the source.
+
+    A name ("v" on a VOP global, "P") used to die on a bare int() with
+    "invalid literal for int()", in a dry run too.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"source_output must be an output index or name, got {value!r}")
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    return int(text) if text.lstrip("-").isdigit() else text
+
+
 def _parse_input_entry(entry: Any, position: int) -> dict[str, Any]:
     """What one `inputs` entry of a build_network spec asks for.
 
@@ -728,7 +744,7 @@ def _parse_input_entry(entry: Any, position: int) -> dict[str, Any]:
         "input_name": entry.get("input_name"),
         "source": entry.get("source"),
         "indirect": entry.get("indirect_input"),
-        "source_output": int(entry.get("source_output", 0)),
+        "source_output": _source_output(entry.get("source_output", 0)),
     }
 
 
@@ -1068,7 +1084,9 @@ def build_network(
             inputs (list): wiring. Entries are either a source string
                 (wired positionally) or {"index" | "input_name", "source",
                 "source_output"}; "input_name" is a connector name or
-                label, as get_node_card lists them, and wins over "index".
+                label, as get_node_card lists them, and wins over "index";
+                "source_output" is an output index or an output name or
+                label ("v", "P").
                 Sources resolve to spec node names first, then children of
                 parent, then absolute paths. {"indirect_input": n} instead
                 of "source" wires from connector n of the parent subnet
@@ -1238,6 +1256,18 @@ def build_network(
             listed.append(connectors)
         return listed[0]
 
+    def _source_outputs(source: Any) -> list | None:
+        """Output connectors of an input source, or None when they cannot be known."""
+        for position, other in enumerate(nodes):
+            if isinstance(other, dict) and other.get("name") == source:
+                connectors = spec_connectors.get(position)
+                knowledge = parm_knowledge.get(other.get("type"))
+                if connectors is None and knowledge:
+                    connectors = knowledge[4]
+                return None if connectors is None else connectors.get("outputs", [])
+        node = parent.node(str(source)) or hou.node(str(source))
+        return None if node is None else _connectors_of(node)["outputs"]
+
     # Literals the spec aims at parms whose factory expression will outlive
     # them, named before anything is built.
     in_the_way: dict[str, dict[str, dict[str, str]]] = {}
@@ -1392,6 +1422,16 @@ def build_network(
                     f"node {label}: input source '{source}' is not a spec "
                     f"node, a child of {parent_path}, or an absolute path"
                 )
+            elif isinstance(wire["source_output"], str):
+                # An output name is resolved here, on what the source exposes
+                # (a spec node's probed connectors, or a live node's), so a
+                # typo fails the dry run, not the build.
+                outputs = _source_outputs(source)
+                if outputs is not None:
+                    try:
+                        _find_output(outputs, wire["source_output"])
+                    except ValueError as exc:
+                        errors.append(f"node {label}: input source '{source}' {exc}")
 
     if errors:
         reply: dict[str, Any] = {
@@ -1482,7 +1522,7 @@ def build_network(
                         or parent.node(str(source_name))
                         or hou.node(str(source_name))
                     )
-                node.setInput(input_index, source, source_output)
+                node.setInput(input_index, source, _output_index(source, source_output))
             flags = spec.get("flags") or {}
             for flag, setter in (
                 ("display", "setDisplayFlag"),
