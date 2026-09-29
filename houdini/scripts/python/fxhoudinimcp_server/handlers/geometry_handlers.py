@@ -1332,6 +1332,10 @@ def _named_volume(geo: hou.Geometry, name: str, node_path: str) -> Any:
     )
 
 
+# The voxel statistics, sampling and field comparison below are adapted from
+# JTCHE/houdini-mcp (MIT, Copyright (c) 2025 Capoom, (c) 2026 John Chedeville);
+# see NOTICE.
+
 # Past this many voxels a read is refused rather than stalling the session:
 # a VDB comes back as a Python tuple, about 180 ms per 8M voxels.
 _MAX_VOXELS_READ = 64_000_000
