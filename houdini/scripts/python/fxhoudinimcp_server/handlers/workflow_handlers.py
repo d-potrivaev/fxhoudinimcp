@@ -1190,6 +1190,12 @@ def _setup_render(
         _set_parm_safe(rop, "res_overridex", resolution[0])
         _set_parm_safe(rop, "res_overridey", resolution[1])
         applied["resolution"] = "override_camerares + res_override"
+        # The Karma ROP in /out also has its own resolutionx/y, and that is
+        # the size it renders at: the override pair alone left a 1280x720
+        # image while this reply said 320x180.
+        if _set_parm_safe(rop, "resolutionx", resolution[0]):
+            _set_parm_safe(rop, "resolutiony", resolution[1])
+            applied["resolution"] += " + resolutionx/y"
     elif _set_parm_safe(rop, "resolutionx", resolution[0]):
         _set_parm_safe(rop, "resolutiony", resolution[1])
         applied["resolution"] = "resolutionx/y"
