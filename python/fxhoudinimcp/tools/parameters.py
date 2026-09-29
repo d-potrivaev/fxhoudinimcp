@@ -44,6 +44,7 @@ async def set_parameter(
     parm_name: str,
     value: Value,
     override_expression: bool = False,
+    run_callbacks: bool = False,
 ) -> dict:
     """Set a parameter value.
 
@@ -61,12 +62,20 @@ async def set_parameter(
     A String parameter echoes `raw_value` (the unexpanded text, `$JOB/...`)
     next to the expanded `new_value`.
 
+    A LOCKED parameter (karmarendersettings resolutiony under res_mode
+    autoheight) takes nothing at all; the error names the menu whose callback
+    sets the lock. Houdini runs such callbacks only from the UI: set that menu
+    with run_callbacks=True first, then the locked parameter.
+
     Args:
         node_path: Node path.
         parm_name: Parameter name.
         value: New value (int, float, string, bool, or list).
         override_expression: Remove an expression standing in the way,
             instead of reporting that the write did not take.
+        run_callbacks: Run the parameter's callback script after the write,
+            as editing it in the UI does (`callback_run` in the reply, and
+            `callback_error` when the callback raised).
     """
     bridge = _get_bridge(ctx)
     return await bridge.execute(
@@ -76,6 +85,7 @@ async def set_parameter(
             "parm_name": parm_name,
             "value": value,
             "override_expression": override_expression,
+            "run_callbacks": run_callbacks,
         },
     )
 
@@ -89,8 +99,9 @@ async def set_parameters(
     node_path: str,
     params: dict[str, Any],
     override_expression: bool = False,
+    run_callbacks: bool = False,
 ) -> dict:
-    """Batch-set multiple parameters on a node.
+    """Batch-set multiple parameters on a node, in the order given.
 
     Parameters that held an expression and therefore ignored the literal are
     listed in `expressions_kept`, with a top-level `warning`: a batch whose
@@ -100,12 +111,20 @@ async def set_parameters(
     carries the same keys as set_parameter's reply. Pass
     override_expression=True to clear those expressions and links instead.
 
+    Locked parameters are in `errors` with `locked: true` and listed in
+    `locked_parms`; the error names the menu whose callback sets the lock.
+    With run_callbacks=True each parameter's callback runs after its write, so
+    `{"res_mode": "manual", "resolutiony": 1080}` unlocks and then writes; a
+    callback that raised is listed in `callbacks_not_run`.
+
     Args:
         node_path: Node path.
-        params: Mapping of parameter names to values. A value written
-            {"expr": "...", "language": "hscript" | "python"} is set as an
-            expression, as in build_network.
+        params: Mapping of parameter names to values, written in this order.
+            A value written {"expr": "...", "language": "hscript" | "python"}
+            is set as an expression, as in build_network.
         override_expression: Remove expressions standing in the way.
+        run_callbacks: Run each parameter's callback script after its write,
+            as the UI does.
     """
     bridge = _get_bridge(ctx)
     return await bridge.execute(
@@ -114,6 +133,7 @@ async def set_parameters(
             "node_path": node_path,
             "params": params,
             "override_expression": override_expression,
+            "run_callbacks": run_callbacks,
         },
     )
 
@@ -298,6 +318,8 @@ async def revert_parameter(ctx: Context, node_path: str, parm_name: str) -> dict
     A default that is itself an expression comes back, named in
     `default_expression` with its `default_expression_language`;
     `expression_error` says when it does not evaluate.
+
+    A locked parameter cannot be reverted; the error names what sets the lock.
 
     Args:
         node_path: Node path.

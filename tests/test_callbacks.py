@@ -144,6 +144,29 @@ class TestPythonCallbackRunsAsPressButtonWould:
         assert hou.session.seen["script_multiparm_index2"] == "2"
         assert hou.session.seen["script_multiparm_nesting"] == "2"
 
+    def test_a_tuple_component_answers_as_the_first_component(self, monkeypatch, pwd):
+        # Measured on 22.0.429: pressButton() on vecz gives parm vecx,
+        # parm_name "vecx", script_parm "vec" and vecx's value.
+        monkeypatch.setattr(hou, "session", MagicMock(), raising=False)
+
+        class _Tuple(list):
+            def name(self):
+                return "vec"
+
+        script = "hou.session.seen = dict(kwargs)"
+        x = _Parm(script=script, value="1.5", name="vecx")
+        y = _Parm(script=script, value="2.5", name="vecy")
+        z = _Parm(script=script, value="3.5", name="vecz")
+        components = _Tuple([x, y, z])
+        for component in components:
+            component.tuple = lambda: components
+        callbacks.press(z)
+        seen = hou.session.seen
+        assert seen["parm"] is x and seen["parm_name"] == "vecx"
+        assert seen["script_parm"] == "vec"
+        assert seen["script_value"] == seen["script_value0"] == "1.5"
+        assert seen["script_value2"] == "3.5"
+
     def test_a_raising_callback_is_a_callback_error(self, pwd):
         parm = _Parm(script="raise PermissionError('locked')")
         with pytest.raises(callbacks.CallbackError) as caught:

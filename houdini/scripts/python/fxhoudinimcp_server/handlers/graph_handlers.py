@@ -40,8 +40,12 @@ from fxhoudinimcp_server.handlers.node_handlers import (
     _resolve_input_index,
 )
 from fxhoudinimcp_server.handlers.parameter_handlers import (
+    LockedParmError,
     _clear_expression,
+    _is_locked,
+    _run_callback,
     broken_references,
+    locked_message,
     suggest_parms,
     template_labels,
 )
@@ -208,6 +212,43 @@ def _instance_menu_errors(scratch: hou.Node, node_type, parms: dict, patterns: l
     return problems
 
 
+def _locked_on_build(scratch: hou.Node, node_type, spec: dict) -> dict[str, str]:
+    """Parms of *spec* that will still be locked when the build writes them.
+
+    Replays the spec's parms, in order, on a probe of the type -- callbacks
+    included when the spec asks for run_callbacks -- because the lock is the
+    node's own state: `res_mode` = manual with its callback unlocks
+    resolutiony, the same menu set without it does not. Answers {parm: why};
+    the build is refused before anything is created, instead of rolled back
+    after.
+    """
+    found: dict[str, str] = {}
+    override = bool(spec.get("override_expression"))
+    callbacks = bool(spec.get("run_callbacks"))
+    with hou.undos.disabler():
+        probe = scratch.createNode(node_type.name())
+        try:
+            for name, value in (spec.get("parms") or {}).items():
+                if _expression_value(value) is not None:
+                    continue
+                try:
+                    _apply_parm(probe, name, value, override, callbacks)
+                except LockedParmError as exc:
+                    found[name] = str(exc)
+                except Exception:
+                    pass  # a bad value is reported by the rest of validation
+            for name in _spec_expressions(spec):
+                parm = probe.parm(name)
+                if parm is not None and name not in found:
+                    reason = locked_message(parm)
+                    if reason:
+                        found[name] = reason
+        finally:
+            with contextlib.suppress(Exception):
+                probe.destroy()
+    return found
+
+
 # OBJ-level container to probe each category's types in, where more than one
 # exists (geo and sopnet both hold SOPs). Any other category is found through
 # hou.NodeType.childTypeCategory(), so Cop2, Shop, VopNet and whatever SideFX
@@ -358,6 +399,7 @@ def _parm_names_for_type(
     node_type,
     parm_types: dict | None = None,
     factory_expressions: dict | None = None,
+    locked: dict | None = None,
 ) -> tuple[set, set, dict, list, dict]:
     """Instantiate a type once to learn its parm names, tuple names, menus and
     multiparm instance patterns.
@@ -375,7 +417,9 @@ def _parm_names_for_type(
     "Float", ...), which is how a string aimed at a numeric parm is caught
     before the build starts; *factory_expressions* maps each parm and parm
     tuple name whose components ship with an expression to {component:
-    expression}, so a dry run can name the literals that will not take.
+    expression}, so a dry run can name the literals that will not take;
+    *locked* maps each parm and parm tuple name with a component the fresh
+    node locks (resolutiony on a karmarendersettings) to those components.
 
     Results are cached per type for the session (probing was 90% of a dry
     run's time), keyed on the HDA definition's modification time, unless a
@@ -385,14 +429,17 @@ def _parm_names_for_type(
     key = (node_type.category().name(), node_type.name(), _definition_stamp(node_type))
     cached = _PARM_PROBE_CACHE.get(key)
     if cached is not None:
-        result, types, expressions = cached
+        result, types, expressions, shut_parms = cached
         if parm_types is not None:
             parm_types.update(types)
         if factory_expressions is not None:
             factory_expressions.update(copy.deepcopy(expressions))
+        if locked is not None:
+            locked.update(copy.deepcopy(shut_parms))
         return copy.deepcopy(result)
     parm_types = {} if parm_types is None else parm_types
     factory_expressions = {} if factory_expressions is None else factory_expressions
+    locked = {} if locked is None else locked
     scene_menus = False
     probe = scratch.createNode(node_type.name())
     connectors = _connectors_of(probe)
@@ -411,6 +458,13 @@ def _parm_names_for_type(
                 factory_expressions[parm_tuple.name()] = found
                 for component, expression in found.items():
                     factory_expressions[component] = {component: expression}
+    if locked is not None:
+        for parm_tuple in probe.parmTuples():
+            shut = [p.name() for p in parm_tuple if _is_locked(p)]
+            if shut:
+                locked[parm_tuple.name()] = shut
+                for component in shut:
+                    locked[component] = [component]
     parm_names = {p.name() for p in probe.parms()}
     tuple_names = {pt.name() for pt in probe.parmTuples()}
     menus: dict[str, list[str]] = {}
@@ -430,12 +484,13 @@ def _parm_names_for_type(
             copy.deepcopy(result),
             dict(parm_types),
             copy.deepcopy(factory_expressions),
+            copy.deepcopy(locked),
         )
     return result
 
 
 # (category, type, definition stamp) -> (probe result, parm types, factory
-# expressions); see _parm_names_for_type.
+# expressions, locked parms); see _parm_names_for_type.
 _PARM_PROBE_CACHE: dict[tuple, tuple] = {}
 
 
@@ -497,6 +552,7 @@ _SPEC_KEYS = frozenset(
         "color",
         "comment",
         "override_expression",
+        "run_callbacks",
     }
 )
 
@@ -563,7 +619,11 @@ def _spec_expressions(spec: dict) -> dict[str, str]:
 
 
 def _apply_parm(
-    node: hou.Node, name: str, value: Any, override_expression: bool = False
+    node: hou.Node,
+    name: str,
+    value: Any,
+    override_expression: bool = False,
+    run_callbacks: bool = False,
 ) -> dict[str, dict[str, str]]:
     """Set a parm or parm tuple, broadcasting scalars and coercing floats.
 
@@ -574,6 +634,11 @@ def _apply_parm(
     when *override_expression* cleared them first. Nothing is evaluated: an
     eval outside a cook leaves errors on the node that the build's report
     would then pick up.
+
+    A locked component raises LockedParmError before anything is written;
+    *run_callbacks* runs the parm's callback after the write, the way the UI
+    does -- which is what sets and clears such locks. A callback that raised
+    is reported in `callbacks_not_run`.
     """
     parm = node.parm(name)
     parm_tuple = node.parmTuple(name)
@@ -581,6 +646,10 @@ def _apply_parm(
         components = list(parm_tuple) if parm_tuple is not None else []
     else:
         components = [parm]
+    for component in components:
+        reason = locked_message(component)
+        if reason:
+            raise LockedParmError(reason)
     before = {p.name(): e for p in components if (e := _expression_of(p)) is not None}
     report: dict[str, dict[str, str]] = {}
     through: dict[str, str] = {}
@@ -596,6 +665,13 @@ def _apply_parm(
             if p.name() in before and (target := _referenced_parm(p)) is not None
         }
     _set_parm_value(name, parm, parm_tuple, value)
+    callback = _run_callback(components[0]) if run_callbacks and components else None
+    if callback is not None:
+        # Keyed the way the other report kinds are: {parm: detail}.
+        if callback["run"]:
+            report["callbacks_run"] = {name: True}
+        else:
+            report["callbacks_not_run"] = {name: callback.get("error")}
     if before and not override_expression:
         for component in components:
             after = _expression_of(component)
@@ -980,7 +1056,15 @@ def build_network(
             expressions (dict): parm name -> expression, as a whole block
                 (alias: exprs). Names are validated like those in `parms`.
             override_expression (bool): clear the expressions that literals
-                in `parms` land on, so the literals take.
+                in `parms` land on, so the literals take. Parms are written
+                in the order given.
+            run_callbacks (bool): run each parm's callback after its write, as
+                the UI does. A LOCKED parm (karmarendersettings resolutiony
+                under res_mode autoheight) is refused at validation, nothing
+                built, with the lock's controlling menu named in
+                `locked_parms`; its callback is what unlocks it, so
+                {"res_mode": "manual", "resolution": [...]} with
+                run_callbacks: true builds.
             inputs (list): wiring. Entries are either a source string
                 (wired positionally) or {"index" | "input_name", "source",
                 "source_output"}; "input_name" is a connector name or
@@ -1083,6 +1167,9 @@ def build_network(
     parm_knowledge: dict[str, tuple[set, set, dict, list, dict]] = {}
     template_knowledge: dict[str, dict[str, str]] = {}
     expression_knowledge: dict[str, dict[str, dict[str, str]]] = {}
+    locked_knowledge: dict[str, dict[str, list[str]]] = {}
+    # Parms a spec would write while they are still locked, per spec label.
+    locked_parms: dict[str, dict[str, str]] = {}
     # Connectors of a spec that names an input and sets parms, probed with
     # those parms applied (see _probe_connectors).
     spec_connectors: dict[int, dict] = {}
@@ -1093,11 +1180,13 @@ def build_network(
             for type_name, node_type in resolved_types.items():
                 template_knowledge[type_name] = {}
                 expression_knowledge[type_name] = {}
+                locked_knowledge[type_name] = {}
                 parm_knowledge[type_name] = _parm_names_for_type(
                     parent,
                     node_type,
                     parm_types=template_knowledge[type_name],
                     factory_expressions=expression_knowledge[type_name],
+                    locked=locked_knowledge[type_name],
                 )
             for index, spec in enumerate(nodes):
                 if not isinstance(spec, dict):
@@ -1109,12 +1198,31 @@ def build_network(
                 )
                 if node_type is not None and spec.get("parms") and names_an_input:
                     spec_connectors[index] = _probe_connectors(parent, node_type, spec["parms"])
+                # A lock is the node's own state, so a spec that writes a parm
+                # a fresh node locks is replayed in order on a probe of its
+                # own -- with its callbacks when it asks for run_callbacks,
+                # since those are what clear the lock. Only such a spec: the
+                # replay runs the spec's real callbacks, dry run included, and
+                # a callback's effects outside the probe cannot be undone.
+                shut = locked_knowledge.get(spec.get("type")) or {}
+                aimed = set(spec.get("parms") or {}) | set(_spec_expressions(spec))
+                if node_type is not None and any(name in shut for name in aimed):
+                    found = _locked_on_build(parent, node_type, spec)
+                    if found:
+                        label = spec.get("name") or spec.get("type") or f"#{index}"
+                        locked_parms[label] = found
         finally:
             with contextlib.suppress(Exception):
                 if display_before is not None:
                     display_before.setDisplayFlag(True)
                 if render_before is not None:
                     render_before.setRenderFlag(True)
+
+    # Refused here, before the build: a locked parm used to fail the build
+    # halfway and roll back every node, the ones before it included.
+    for label, found in locked_parms.items():
+        for parm_name, reason in found.items():
+            errors.append(f"node {label}: parm '{parm_name}': {reason}")
 
     # The parent's input connectors, listed once per build rather than once
     # per entry that uses one.
@@ -1141,6 +1249,8 @@ def build_network(
         if not spec.get("override_expression"):
             shipped = expression_knowledge.get(spec.get("type")) or {}
             for parm_name, value in (spec.get("parms") or {}).items():
+                if parm_name in locked_parms.get(label, {}):
+                    continue  # refused as locked; an expression note would mislead
                 if _expression_value(value) is None and parm_name in shipped:
                     in_the_way.setdefault(label, {})[parm_name] = shipped[parm_name]
         knowledge = parm_knowledge.get(spec.get("type"))
@@ -1284,7 +1394,15 @@ def build_network(
                 )
 
     if errors:
-        return {"success": False, "valid": False, "errors": errors, "created": []}
+        reply: dict[str, Any] = {
+            "success": False,
+            "valid": False,
+            "errors": errors,
+            "created": [],
+        }
+        if locked_parms:
+            reply["locked_parms"] = locked_parms
+        return reply
     if dry_run:
         result = {
             "success": True,
@@ -1316,11 +1434,12 @@ def build_network(
 
         for spec, node in zip(nodes, created.values(), strict=False):
             override = bool(spec.get("override_expression"))
+            callbacks = bool(spec.get("run_callbacks"))
             for parm_name, value in (spec.get("parms") or {}).items():
                 if _expression_value(value) is not None:
                     continue  # an {"expr": ...} value, set with the expressions below
                 try:
-                    written = _apply_parm(node, parm_name, value, override)
+                    written = _apply_parm(node, parm_name, value, override, callbacks)
                 except Exception as exc:
                     items = []
                     with contextlib.suppress(Exception):
@@ -1484,6 +1603,17 @@ def build_network(
             f"These parameters are pure channel references, so the value was written "
             f"into the parameter each one reads, not into itself: {through}. Pass "
             f"override_expression: true on the spec to break the link instead."
+        )
+    not_run = {
+        path: found["callbacks_not_run"]
+        for path, found in parm_reports.items()
+        if found.get("callbacks_not_run")
+    }
+    if not_run:
+        result["callbacks_not_run"] = not_run
+        warnings.append(
+            f"Callbacks asked for with run_callbacks did not go through: {not_run}. "
+            f"The values were written; what the callback would have done was not."
         )
     if warnings:
         result["warning"] = " ".join(warnings)

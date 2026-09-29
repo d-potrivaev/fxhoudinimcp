@@ -63,11 +63,18 @@ def _callback_kwargs(parm: hou.Parm, arguments: dict | None) -> dict[str, Any]:
         indices = tuple(parm.multiParmInstanceIndices())
     index = str(indices[-1]) if indices else "-1"
     nesting = str(len(indices))
+    # Pressed on any component of a tuple, pressButton() answers as the
+    # tuple's first component: vecz gives parm vecx, parm_name "vecx",
+    # script_parm "vec" and vecx's value (measured on 22.0.429).
+    first, tuple_name = parm, parm.name()
+    with contextlib.suppress(Exception):
+        parm_tuple = parm.tuple()
+        first, tuple_name = parm_tuple[0], parm_tuple.name()
     kwargs: dict[str, Any] = {
         "node": parm.node(),
-        "parm": parm,
-        "parm_name": parm.name(),
-        "script_parm": parm.name(),
+        "parm": first,
+        "parm_name": first.name(),
+        "script_parm": tuple_name,
         "script_multiparm_index": index,
         "script_multiparm_nesting": nesting,
     }
@@ -75,7 +82,7 @@ def _callback_kwargs(parm: hou.Parm, arguments: dict | None) -> dict[str, Any]:
         kwargs[f"script_multiparm_index{level}"] = str(number)
     value = ""
     with contextlib.suppress(Exception):
-        value = parm.evalAsString()
+        value = first.evalAsString()
     kwargs["script_value"] = kwargs["script_value0"] = value
     with contextlib.suppress(Exception):
         components = list(parm.tuple())
