@@ -86,8 +86,13 @@ async def set_viewport_display(
     display_mode: str | None = None,
     pane_name: str | None = None,
     environment_background: bool | None = None,
+    reference_plane: bool | None = None,
+    point_size: float | None = None,
+    color_scheme: str | None = None,
 ) -> dict:
-    """Set the viewport shading mode and/or the environment background.
+    """Set how the viewport draws: shading, environment background, grid,
+    particle point size, colour scheme. Any of them in one call; each is read
+    back in the reply.
 
     Args:
         display_mode: One of 'wireframe', 'shaded', 'smooth', 'smooth_wire',
@@ -96,15 +101,24 @@ async def set_viewport_display(
         environment_background: False hides an environment (dome) light's
             map behind the scene, True shows it. Set on every view of the
             viewer; the reply reads it back per view.
+        reference_plane: False hides the reference plane (the grid), True
+            shows it.
+        point_size: Diameter in pixels of particles drawn as points, on every
+            view of the viewer.
+        color_scheme: 'dark', 'darkgrey', 'grey' or 'light', on every view.
     """
     bridge = _get_bridge(ctx)
     params: dict[str, Any] = {}
-    if display_mode is not None:
-        params["display_mode"] = display_mode
-    if pane_name is not None:
-        params["pane_name"] = pane_name
-    if environment_background is not None:
-        params["environment_background"] = environment_background
+    for key, value in (
+        ("display_mode", display_mode),
+        ("pane_name", pane_name),
+        ("environment_background", environment_background),
+        ("reference_plane", reference_plane),
+        ("point_size", point_size),
+        ("color_scheme", color_scheme),
+    ):
+        if value is not None:
+            params[key] = value
     return await bridge.execute("viewport.set_viewport_display", params)
 
 

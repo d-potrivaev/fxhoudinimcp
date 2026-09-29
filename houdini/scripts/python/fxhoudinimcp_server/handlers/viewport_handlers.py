@@ -358,12 +358,26 @@ def set_viewport_camera(
 ###### viewport.set_viewport_display
 
 
+# color_scheme's spellings, mapped to hou.viewportColorScheme names.
+_COLOR_SCHEMES = {
+    "dark": "Dark",
+    "darkgrey": "DarkGrey",
+    "dark_grey": "DarkGrey",
+    "grey": "Grey",
+    "gray": "Grey",
+    "light": "Light",
+}
+
+
 def set_viewport_display(
     display_mode: str = None,
     pane_name: str = None,
     environment_background: bool = None,
+    reference_plane: bool = None,
+    point_size: float = None,
+    color_scheme: str = None,
 ) -> dict:
-    """Set the viewport display/shading mode and the environment background.
+    """Set how the viewport draws: shading, background, grid, point size, colours.
 
     Args:
         display_mode: One of 'wireframe', 'shaded', 'smooth', 'smooth_wire',
@@ -371,9 +385,37 @@ def set_viewport_display(
         pane_name: Optional pane tab name.
         environment_background: Show (True) or hide (False) an environment
             light's map behind the scene, on every view of the viewer.
+        reference_plane: Show (True) or hide (False) the reference plane (the
+            grid).
+        point_size: Diameter in pixels of particles drawn as points, on every
+            view of the viewer.
+        color_scheme: 'dark', 'darkgrey', 'grey' or 'light', on every view.
+
+    Each setting is read back rather than echoed: the per-view ones as a
+    ``{view name: value}`` map.
     """
-    if display_mode is None and environment_background is None:
-        raise ValueError("Pass display_mode, environment_background, or both.")
+    asked = (display_mode, environment_background, reference_plane, point_size, color_scheme)
+    if all(value is None for value in asked):
+        raise ValueError(
+            "Pass display_mode, environment_background, reference_plane, point_size "
+            "or color_scheme."
+        )
+    # Refused before anything is touched, so a bad value never half-applies a call.
+    scheme = None
+    if color_scheme is not None:
+        scheme = _COLOR_SCHEMES.get(str(color_scheme).strip().lower().replace(" ", ""))
+        if scheme is None:
+            raise ValueError(
+                f"Unknown color_scheme '{color_scheme}'. Supported: dark, darkgrey, grey, light."
+            )
+    size = None
+    if point_size is not None:
+        try:
+            size = float(point_size)
+        except (TypeError, ValueError):
+            size = 0.0
+        if isinstance(point_size, bool) or not size > 0:
+            raise ValueError(f"point_size must be a positive number of pixels, got {point_size!r}")
 
     mode_map = {
         "wireframe": hou.glShadingType.Wire,
@@ -415,6 +457,32 @@ def set_viewport_display(
             settings.setDisplayEnvironmentBackgroundImage(bool(environment_background))
             shown[view.name()] = settings.displayEnvironmentBackgroundImage()
         result["environment_background"] = shown
+
+    if reference_plane is not None:
+        # One plane per viewer, not per view.
+        plane = scene_viewer.referencePlane()
+        plane.setIsVisible(bool(reference_plane))
+        result["reference_plane"] = plane.isVisible()
+
+    if size is not None:
+        # GeometryViewportSettings has particlePointSize() and no setter, so a
+        # session looking for one read back 3.0 and gave up. viewdisplay -p on
+        # the viewer sets it on every view.
+        viewer_path = f"{hou.ui.curDesktop().name()}.{scene_viewer.name()}.world"
+        _, error = hou.hscript(f"viewdisplay -p {size} {viewer_path}")
+        if error.strip():
+            raise RuntimeError(f"viewdisplay -p failed: {error.strip()}")
+        result["point_size"] = {
+            view.name(): view.settings().particlePointSize() for view in scene_viewer.viewports()
+        }
+
+    if scheme is not None:
+        schemes = {}
+        for view in scene_viewer.viewports():
+            settings = view.settings()
+            settings.setColorScheme(getattr(hou.viewportColorScheme, scheme))
+            schemes[view.name()] = str(settings.colorScheme()).rsplit(".", 1)[-1]
+        result["color_scheme"] = schemes
 
     return result
 
