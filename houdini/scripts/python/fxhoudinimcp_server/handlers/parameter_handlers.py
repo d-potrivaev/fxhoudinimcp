@@ -441,11 +441,27 @@ def _expression_driven(parms: list[hou.Parm]) -> str | None:
     return None
 
 
+# Keys of an animation curve: bezier(), linear(), constant(), cubic(), ...
+_CURVE_FUNCTION = re.compile(r"[A-Za-z]+\(\)")
+
+
 def _expression_of(parm: hou.Parm) -> str | None:
     """The expression *parm* holds, or None when it holds a plain value."""
     try:
         expression = parm.expression()
     except Exception:
+        # hou.Parm.expression() wants exactly one key. Writing a literal to a
+        # parm whose expression sits on another frame (a File Cache's $FEND,
+        # written at frame 6) adds a second key with the same expression and
+        # changes nothing, and after that the expression could no longer be
+        # seen: the write neither landed nor was reported. Keys that all carry
+        # one plain expression are that same expression; animation curves are
+        # not, and stay "no expression" as before.
+        with contextlib.suppress(Exception):
+            texts = {key.expression() for key in parm.keyframes()}
+            if len(texts) == 1 and not _CURVE_FUNCTION.fullmatch(next(iter(texts))):
+                expression = next(iter(texts))
+                return expression or None
         return None
     return expression if isinstance(expression, str) and expression else None
 
