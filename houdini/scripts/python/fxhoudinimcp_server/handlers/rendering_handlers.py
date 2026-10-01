@@ -402,27 +402,43 @@ def create_render_node(
     if out_context is None:
         raise RuntimeError("/out context not found.")
 
-    # Map friendly renderer names to actual node types
+    # Friendly names to the ROP types /out really has, in preference order. The
+    # SOP-level names (rop_geometry, rop_alembic) are what the docs advertise, but
+    # in /out the same nodes are "geometry" and "alembic": creating those raised a
+    # bare "Invalid node type name".
     renderer_map = {
-        "karma": "karma",
-        "opengl": "opengl",
-        "mantra": "ifd",
-        "ifd": "ifd",
-        "geometry": "rop_geometry",
-        "rop_geometry": "rop_geometry",
-        "alembic": "rop_alembic",
-        "rop_alembic": "rop_alembic",
-        "fetch": "fetch",
-        "merge": "merge",
-        "usdrender": "usdrender",
-        "usd_rop": "usd_rop",
-        "filmboxfbx": "filmboxfbx",
-        "comp": "comp",
-        "wedge": "wedge",
-        "baketexture": "baketexture",
+        "karma": ("karma",),
+        "opengl": ("opengl",),
+        "mantra": ("ifd",),
+        "ifd": ("ifd",),
+        "geometry": ("geometry", "rop_geometry"),
+        "rop_geometry": ("geometry", "rop_geometry"),
+        "alembic": ("alembic", "rop_alembic"),
+        "rop_alembic": ("alembic", "rop_alembic"),
+        "usd": ("usd", "usd_rop"),
+        "usd_rop": ("usd", "usd_rop"),
+        "fbx": ("filmboxfbx", "rop_fbx"),
+        "rop_fbx": ("filmboxfbx", "rop_fbx"),
+        "filmboxfbx": ("filmboxfbx", "rop_fbx"),
+        "gltf": ("gltf", "rop_gltf"),
+        "rop_gltf": ("gltf", "rop_gltf"),
+        "fetch": ("fetch",),
+        "merge": ("merge",),
+        "usdrender": ("usdrender",),
+        "comp": ("comp",),
+        "wedge": ("wedge",),
+        "baketexture": ("baketexture",),
     }
 
-    node_type = renderer_map.get(renderer.lower(), renderer)
+    available = set(hou.ropNodeTypeCategory().nodeTypes())
+    candidates = renderer_map.get(renderer.lower(), (renderer,))
+    node_type = next((c for c in candidates if c in available), None)
+    if node_type is None:
+        raise ValueError(
+            f"No ROP type '{renderer}' in this Houdini (looked for: {', '.join(candidates)}). "
+            f"Renderer names that work here: {', '.join(sorted(k for k, v in renderer_map.items() if any(c in available for c in v)))}. "
+            "Other types in /out can be passed by their exact name."
+        )
 
     try:
         node = out_context.createNode(node_type, name)

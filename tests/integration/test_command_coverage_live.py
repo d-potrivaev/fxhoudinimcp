@@ -637,3 +637,45 @@ class TestAnimationModule:
         frame = call("animation.get_frame")
         assert "25" in str(frame)
         call("animation.playbar_control", action="stop", allow_error=True)
+
+
+class TestCreateRenderNodeAdvertisedNames:
+    """The tool's docs name rop_geometry, rop_alembic and usd_rop, but /out spells those
+    geometry, alembic and usd; creating them raised a bare "Invalid node type name".
+    The suite only smoke-called it, so it never noticed."""
+
+    @pytest.mark.parametrize(
+        ("renderer", "expected_type"),
+        [
+            ("rop_geometry", "geometry"),
+            ("geometry", "geometry"),
+            ("rop_alembic", "alembic"),
+            ("alembic", "alembic"),
+            ("usd_rop", "usd"),
+            ("fbx", "filmboxfbx"),
+            ("karma", "karma"),
+            ("opengl", "opengl"),
+            ("fetch", "fetch"),
+            ("merge", "merge"),
+        ],
+    )
+    def test_each_advertised_name_makes_the_node(self, call, renderer, expected_type):
+        result = call("rendering.create_render_node", renderer=renderer, name="adv")
+
+        assert result["success"] is True, result
+        assert result["node_type"] == expected_type, result
+        assert hou.node(result["node_path"]) is not None
+
+    def test_an_unknown_renderer_says_what_is_available(self, call):
+        error = call("rendering.create_render_node", expect_error=True, renderer="notarenderer")
+
+        message = str(error["message"])
+        assert "notarenderer" in message, message
+        assert "geometry" in message and "karma" in message, f"no list of what does work: {message}"
+
+    def test_output_path_lands_on_a_geometry_rop(self, call, tmp_path):
+        out = str(tmp_path / "o.$F4.bgeo.sc").replace("\\", "/")
+
+        result = call("rendering.create_render_node", renderer="rop_geometry", output_path=out)
+
+        assert hou.node(result["node_path"]).parm("sopoutput").unexpandedString() == out
