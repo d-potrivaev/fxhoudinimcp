@@ -290,3 +290,50 @@ class TestEveryEditorMoveKeepsTheViewer:
                 ):
                     offenders.append(f"{path.name}:{node.lineno}")
         assert offenders == []
+
+
+class TestCapturesDrawNoSelection:
+    """A selected object was drawn with its outline in every viewport capture."""
+
+    def test_the_selection_is_empty_during_the_block_and_back_after(self, houdini):
+        during = []
+        with ui.selection_hidden():
+            during.append(list(houdini.selection))
+        assert during == [[]]
+        assert [node.path() for node in houdini.selection] == ["/obj/g/box1"]
+
+    def test_it_comes_back_when_the_capture_raises(self, houdini):
+        with pytest.raises(RuntimeError), ui.selection_hidden():
+            raise RuntimeError("flipbook failed")
+        assert [node.path() for node in houdini.selection] == ["/obj/g/box1"]
+
+    def test_nothing_is_touched_without_a_selection(self, houdini, monkeypatch):
+        houdini.selection.clear()
+        cleared = []
+        monkeypatch.setattr(ui.hou, "clearAllSelected", lambda: cleared.append(True))
+        with ui.selection_hidden():
+            pass
+        assert cleared == []
+
+    def test_every_viewport_flipbook_runs_inside_it(self):
+        found = []
+        for path in sorted((_SERVER_DIR / "handlers").glob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            hidden = {
+                id(call)
+                for block in ast.walk(tree)
+                if isinstance(block, ast.With)
+                and any("selection_hidden" in ast.unparse(i.context_expr) for i in block.items)
+                for call in ast.walk(block)
+                if isinstance(call, ast.Call)
+            }
+            for call in ast.walk(tree):
+                if (
+                    isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "flipbook"
+                ):
+                    found.append((path.name, call.lineno, id(call) in hidden))
+        assert found, "no flipbook call found -- the guard lost its target"
+        bare = [(name, line) for name, line, inside in found if not inside]
+        assert bare == [], f"flipbook() outside ui.selection_hidden(): {bare}"

@@ -207,3 +207,27 @@ def focus_network_editor(
                     return
     except Exception:
         pass  # Never let UI helpers break a tool call
+
+
+@contextlib.contextmanager
+def selection_hidden() -> Iterator[None]:
+    """Draw no selection highlight for the block (a viewport capture), then put it back.
+
+    A selected object is drawn with a selection outline, and a capture took it
+    along whoever had selected it. The viewer has no switch for that highlight
+    (neither HOM nor viewdisplay), so the node selection is cleared for the
+    block. What was selected is put back as it was: the editor already shows
+    it (it follows a selected node into its network), so it does not move.
+    """
+    selected: list = []
+    with contextlib.suppress(Exception):
+        selected = list(hou.selectedNodes())
+        if selected:
+            hou.clearAllSelected()
+    try:
+        yield
+    finally:
+        if selected:
+            with contextlib.suppress(Exception):
+                for n in selected:
+                    n.setSelected(True, clear_all_selected=False)
