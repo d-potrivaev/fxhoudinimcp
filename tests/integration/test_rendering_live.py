@@ -161,3 +161,21 @@ class TestStartRenderReportsFailureHonestly:
         # without anything being executed.
         error = call("rendering.start_render", node_path=box.path(), expect_error=True)
         assert "nothing to trigger" in error["message"]
+
+
+class TestMantraOutputIsWatched:
+    def test_mantra_picture_path_is_a_watched_output(self, call, tmp_path):
+        """vm_picture was not a watched output, so nothing was ever verified.
+
+        Whether mantra can render here depends on the license, so the test
+        does not render: it checks that the picture path is reported, so a
+        render that writes nothing can be told apart from one that did.
+        """
+        rop = hou.node("/out").createNode("ifd", "mantra_watch")
+        target = str(tmp_path / "never_written.png").replace("\\", "/")
+        rop.parm("vm_picture").set(target)
+
+        progress = call("rendering.get_render_progress", node_path=rop.path())
+
+        assert [o["parm"] for o in progress["outputs"]] == ["vm_picture"], progress
+        assert progress["outputs"][0]["exists"] is False, progress
