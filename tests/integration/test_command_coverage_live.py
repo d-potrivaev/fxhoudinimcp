@@ -52,6 +52,26 @@ class TestDops:
         )
 
 
+class TestDopRelationships:
+    def test_merge_relationship_is_reported(self, call):
+        """``hou.DopObject`` has no ``relationships()``; this used to report 0 forever."""
+        net = hou.node("/obj").createNode("dopnet", "reltest")
+        a = net.createNode("emptyobject", "a")
+        b = net.createNode("emptyobject", "b")
+        merge = net.createNode("merge", "m")
+        merge.setInput(0, a)
+        merge.setInput(1, b)
+        merge.setDisplayFlag(True)
+        hou.setFrame(2)
+
+        result = call("dops.get_dop_relationships", node_path=net.path())
+
+        assert result["relationship_count"] >= 1, result
+        by_name = {r["name"]: r for r in result["relationships"]}
+        assert "m" in by_name, sorted(by_name)
+        assert by_name["m"]["objects_in_group"], by_name["m"]
+
+
 @pytest.mark.usefixtures("saved_hip")
 class TestTops:
     def test_top_cook_lifecycle(self, call):
