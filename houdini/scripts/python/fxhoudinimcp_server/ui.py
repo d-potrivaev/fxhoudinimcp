@@ -221,7 +221,8 @@ def selection_hidden() -> Iterator[None]:
     """
     selected: list = []
     with contextlib.suppress(Exception):
-        selected = list(hou.selectedNodes())
+        # clearAllSelected() also clears boxes, notes, dots and hidden nodes.
+        selected = list(hou.selectedItems(include_hidden=True))
         if selected:
             hou.clearAllSelected()
     try:

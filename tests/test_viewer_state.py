@@ -20,6 +20,7 @@ import ast
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 # Third-party
@@ -131,8 +132,17 @@ def houdini(monkeypatch):
     monkeypatch.setattr(hou.paneTabType, "SceneViewer", "SceneViewer", raising=False)
     monkeypatch.setattr(hou.paneTabType, "NetworkEditor", "NetworkEditor", raising=False)
     monkeypatch.setattr(hou.ui, "paneTabs", lambda: state.panes, raising=False)
-    monkeypatch.setattr(hou, "selectedNodes", lambda: list(state.selection), raising=False)
+    # Nodes only: boxes, notes and dots are in selectedItems().
+    monkeypatch.setattr(
+        hou,
+        "selectedNodes",
+        lambda: [item for item in state.selection if item in known.values()],
+        raising=False,
+    )
     monkeypatch.setattr(hou, "clearAllSelected", state.selection.clear, raising=False)
+    monkeypatch.setattr(
+        hou, "selectedItems", lambda include_hidden=False: list(state.selection), raising=False
+    )
     monkeypatch.setattr(hou, "node", known.get, raising=False)
     monkeypatch.setattr(hou, "isUIAvailable", lambda: True, raising=False)
     monkeypatch.setattr(hou, "lopNodeTypeCategory", lambda: "Lop", raising=False)
@@ -306,6 +316,16 @@ class TestCapturesDrawNoSelection:
         with pytest.raises(RuntimeError), ui.selection_hidden():
             raise RuntimeError("flipbook failed")
         assert [node.path() for node in houdini.selection] == ["/obj/g/box1"]
+
+    def test_a_selected_network_box_comes_back_too(self, houdini):
+        box = SimpleNamespace(path=lambda: "/obj/g/__netbox1")
+        box.setSelected = lambda on, clear_all_selected=False: (
+            houdini.selection.append(box) if on else None
+        )
+        houdini.selection.append(box)
+        with ui.selection_hidden():
+            assert houdini.selection == []
+        assert [item.path() for item in houdini.selection] == ["/obj/g/box1", "/obj/g/__netbox1"]
 
     def test_nothing_is_touched_without_a_selection(self, houdini, monkeypatch):
         houdini.selection.clear()
