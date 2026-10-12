@@ -55,15 +55,29 @@ async def create_node(
 
 
 @mcp.tool()
-async def delete_node(ctx: Context, node_path: str) -> dict:
-    """Delete a node.
+async def delete_node(
+    ctx: Context,
+    node_path: str | None = None,
+    node_paths: list[str] | None = None,
+) -> dict:
+    """Delete a node, or several in one call.
+
+    Pass node_path or node_paths, not both.
 
     Args:
         ctx: MCP context.
         node_path: Node path.
+        node_paths: Several nodes at once, one undo step. Every path is
+            checked first: a missing one deletes nothing. A node inside
+            another listed one goes with it (`deleted_with_parent`).
     """
     bridge = _get_bridge(ctx)
-    return await bridge.execute("nodes.delete_node", {"node_path": node_path})
+    params: dict[str, Any] = {}
+    if node_path is not None:
+        params["node_path"] = node_path
+    if node_paths is not None:
+        params["node_paths"] = node_paths
+    return await bridge.execute("nodes.delete_node", params)
 
 
 @mcp.tool()
