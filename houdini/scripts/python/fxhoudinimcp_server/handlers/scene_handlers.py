@@ -156,6 +156,57 @@ def _base_name(name: str) -> str:
     return name.rstrip("0123456789")
 
 
+# Globals a merged file may change: the time variables follow the playbar
+# and ACTIVETAKE the takes, not the file; _HIP_* are the file's save stamps.
+_MERGE_GLOBALS_KEPT = frozenset({"F", "FF", "T", "oldFF", "ACTIVETAKE"})
+
+
+def _hip_globals() -> dict[str, str]:
+    """The scene's `set -g` variables, by name."""
+    found: dict[str, str] = {}
+    with contextlib.suppress(Exception):
+        text = hou.hscript("set -g")[0]
+        for line in text.splitlines():
+            name, sep, value = line.partition("\t= ")
+            if sep and name.strip():
+                found[name.strip()] = value
+    return found
+
+
+def _hscript_quoted(value: str) -> str:
+    """Quote a value for `set -g` so hscript does not expand it."""
+    if "'" not in value:
+        return f"'{value}'"
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _restore_globals(before: dict[str, str]) -> tuple[dict[str, dict], dict[str, str]]:
+    """Put back the scene globals a merge changed; name the ones it added.
+
+    hou.hipFile.merge runs the file's `set -g` lines, as File > Merge does.
+    Merging a lesson file saved on Windows set JOB to C:/Users/... and POSE
+    to its poselib; every $JOB path of the scene then pointed at C:, the
+    merge answered warnings: [], and it surfaced as a PermissionError on
+    the next file write. A merge brings nodes; the scene keeps its own
+    variables.
+    """
+    after = _hip_globals()
+    restored: dict[str, dict] = {}
+    for name, value in before.items():
+        if name in _MERGE_GLOBALS_KEPT or name.startswith("_HIP_"):
+            continue
+        if after.get(name, value) != value:
+            with contextlib.suppress(Exception):
+                hou.hscript(f"set -g {name} = {_hscript_quoted(value)}")
+            restored[name] = {"from_file": after[name], "kept": value}
+    added = {
+        name: value
+        for name, value in after.items()
+        if name not in before and name not in _MERGE_GLOBALS_KEPT and not name.startswith("_HIP_")
+    }
+    return restored, added
+
+
 def _merge(file_path: str, node_paths: list | None, overwrite_on_conflict: bool) -> dict:
     if node_paths is not None and not isinstance(node_paths, (list, tuple)):
         raise ValueError("node_paths must be a list of absolute node paths.")
@@ -192,6 +243,7 @@ def _merge(file_path: str, node_paths: list | None, overwrite_on_conflict: bool)
             for node in hou.hipFile.collisionNodesIfMerged(file_path, node_pattern=pattern)
         }
     before = _children_of(watched)
+    globals_before = _hip_globals()
     warnings: list[str] = []
     try:
         hou.hipFile.merge(
@@ -202,6 +254,7 @@ def _merge(file_path: str, node_paths: list | None, overwrite_on_conflict: bool)
         )
     except hou.LoadWarning as warning:
         warnings = _warning_lines(warning)
+    globals_restored, globals_added = _restore_globals(globals_before)
     after = _children_of(watched)
     arrived = set()
     for network, paths in after.items():
@@ -276,6 +329,14 @@ def _merge(file_path: str, node_paths: list | None, overwrite_on_conflict: bool)
             "Paths in not_found_in_file brought nothing: check they are absolute "
             "paths that exist in the file, under a parent that exists in this scene."
         )
+    if globals_restored:
+        result["globals_restored"] = globals_restored
+        result["globals_note"] = (
+            "The file's `set -g` lines changed these scene variables; they were put "
+            "back. The file's values are in from_file."
+        )
+    if globals_added:
+        result["globals_added"] = globals_added
     return result
 
 
@@ -292,7 +353,9 @@ def load_scene(
     are absolute (`/obj/building`), each brought with its contents; a node
     that already exists is merged under a new name unless
     overwrite_on_conflict=True overwrites it in place, and `conflicts` says
-    which.
+    which. The scene keeps its own `set -g` variables ($JOB, $POSE): a file
+    that changes them is put back and named in `globals_restored`, one that
+    adds new ones in `globals_added`.
 
     Args:
         file_path: Path to the .hip/.hipnc/.hiplc file.

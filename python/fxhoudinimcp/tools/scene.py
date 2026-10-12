@@ -154,7 +154,10 @@ async def load_scene(
     A merge reports what arrived: `merged_nodes`, `conflicts` (a node that
     already exists is merged under a new name, or overwritten in place with
     overwrite_on_conflict=True) and `not_found_in_file`. node_paths are
-    absolute (`/obj/building_v3`) and bring their contents.
+    absolute (`/obj/building_v3`) and bring their contents. A merge keeps
+    the scene's `set -g` variables ($JOB, $POSE) the file would overwrite,
+    named in `globals_restored` with the file's value and the kept one;
+    variables the file adds are listed in `globals_added`.
 
     Args:
         file_path: Path to the hip file to open.

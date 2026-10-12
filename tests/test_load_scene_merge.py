@@ -55,11 +55,25 @@ class _Node:
 class _Scene:
     """A node tree plus a merge that behaves the way 22.0.429 was measured to."""
 
-    def __init__(self, scene_nodes, file_nodes, warning=None):
+    def __init__(
+        self, scene_nodes, file_nodes, warning=None, scene_globals=None, file_globals=None
+    ):
         self.tree = {"/", "/obj", "/out"} | set(scene_nodes)
         self.file = set(file_nodes)
         self.warning = warning
         self.merge_calls = []
+        self.globals = dict(scene_globals or {})
+        self.file_globals = dict(file_globals or {})
+        self.hscript_calls = []
+
+    def hscript(self, command):
+        """`set -g` lists the globals; `set -g NAME = 'value'` sets one."""
+        self.hscript_calls.append(command)
+        if command == "set -g":
+            return ("".join(f"{k}\t= {v}\n" for k, v in self.globals.items()), "")
+        name, _, value = command[len("set -g ") :].partition(" = ")
+        self.globals[name] = value[1:-1]
+        return ("", "")
 
     def node(self, path):
         return _Node(self.tree, path) if path in self.tree else None
@@ -96,6 +110,8 @@ class _Scene:
             for p in selected:
                 if p == top or p.startswith(top + "/"):
                     self.tree.add(target + p[len(top) :])
+        # A merge runs the file's `set -g` lines, as File > Merge does.
+        self.globals.update(self.file_globals)
         if self.warning:
             raise _LoadWarning(self.warning)
 
@@ -110,6 +126,7 @@ def hip(tmp_path):
 def _install(monkeypatch, fake):
     monkeypatch.setattr(scene, "require_inside_project_root", lambda path, what="": path)
     monkeypatch.setattr(scene.hou, "node", fake.node)
+    monkeypatch.setattr(scene.hou, "hscript", fake.hscript)
     monkeypatch.setattr(scene.hou, "LoadWarning", _LoadWarning)
     monkeypatch.setattr(scene.hou.text, "expandString", lambda s: s)
     hip_file = MagicMock()
@@ -208,6 +225,60 @@ class TestMergeEverything:
         result = scene.load_scene(hip, merge=True)
         assert result["warnings"] == ["Missing asset", "foo::1.0"]
         assert result["success"] is False
+
+
+class TestMergeKeepsSceneGlobals:
+    """Measured on 22.0.429: merging a file saved on Windows set $JOB to
+    C:/Users/..., and every $JOB path of the scene followed it."""
+
+    SCENE = {"JOB": "/work/job", "POSE": "/home/me/poselib", "F": "1", "HIP": "/work/job"}
+    FILE = {
+        "JOB": "C:/Users/someone",
+        "POSE": "C:/Users/someone/Documents/houdini17.5/poselib",
+        "F": "12",
+        "ACTIVETAKE": "Main",
+        "_HIP_SAVEVERSION": "17.5.391",
+        "HANDLE_STATUS": "-1",
+        "HIP": "/work/job",
+    }
+
+    def test_a_changed_global_is_put_back_and_named(self, monkeypatch, hip):
+        fake = _Scene([], FILE, scene_globals=self.SCENE, file_globals=self.FILE)
+        _install(monkeypatch, fake)
+        result = scene.load_scene(hip, merge=True)
+        assert fake.globals["JOB"] == "/work/job"
+        assert fake.globals["POSE"] == "/home/me/poselib"
+        assert result["globals_restored"] == {
+            "JOB": {"from_file": "C:/Users/someone", "kept": "/work/job"},
+            "POSE": {
+                "from_file": "C:/Users/someone/Documents/houdini17.5/poselib",
+                "kept": "/home/me/poselib",
+            },
+        }
+        assert "set -g JOB = '/work/job'" in fake.hscript_calls
+        assert "globals_note" in result
+        assert result["merged_nodes"] == ["/obj/building", "/obj/geo1", "/obj/null1"]
+
+    def test_time_variables_take_and_save_stamps_are_left_to_the_merge(self, monkeypatch, hip):
+        fake = _Scene([], FILE, scene_globals=self.SCENE, file_globals=self.FILE)
+        _install(monkeypatch, fake)
+        result = scene.load_scene(hip, merge=True)
+        assert fake.globals["F"] == "12"
+        assert "F" not in result["globals_restored"]
+        # A variable the file brings that the scene did not have is named, not removed.
+        assert result["globals_added"] == {"HANDLE_STATUS": "-1"}
+
+    def test_a_file_that_sets_nothing_new_adds_no_fields(self, monkeypatch, hip):
+        fake = _Scene([], FILE, scene_globals=self.SCENE, file_globals={"JOB": "/work/job"})
+        _install(monkeypatch, fake)
+        result = scene.load_scene(hip, merge=True)
+        assert "globals_restored" not in result
+        assert "globals_added" not in result
+        assert fake.hscript_calls == ["set -g", "set -g"]
+
+    def test_a_value_with_a_quote_is_quoted_for_hscript(self):
+        assert scene._hscript_quoted("/work/job") == "'/work/job'"
+        assert scene._hscript_quoted("it's") == '"it\'s"'
 
 
 class TestLoad:
