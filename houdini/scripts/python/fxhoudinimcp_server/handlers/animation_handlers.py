@@ -233,17 +233,33 @@ def _set_frame_range(start: float, end: float) -> dict:
 
 
 def _set_playback_range(start: float, end: float) -> dict:
-    """Set the playback range (subset of global range)."""
+    """Set the playback range, widening the global range to hold it.
+
+    Houdini clamps a playback range to the global one without a word: 1-1200
+    asked of a 1-240 scene answered start 1, end 240, "playback_range_set".
+    The global range is widened first instead, and the reply names what it
+    was and what it is now.
+    """
     if start >= end:
         raise hou.OperationFailed(f"start ({start}) must be less than end ({end}).")
+    global_start, global_end = hou.playbar.frameRange()
+    widened = start < global_start or end > global_end
+    if widened:
+        hou.playbar.setFrameRange(min(start, global_start), max(end, global_end))
     hou.playbar.setPlaybackRange(start, end)
 
     actual_start, actual_end = hou.playbar.playbackRange()
-    return {
+    result = {
         "start": actual_start,
         "end": actual_end,
         "status": "playback_range_set",
     }
+    if widened:
+        result["frame_range_widened"] = {
+            "from": [global_start, global_end],
+            "to": list(hou.playbar.frameRange()),
+        }
+    return result
 
 
 def _playbar_control(
