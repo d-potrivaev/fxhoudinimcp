@@ -74,7 +74,7 @@ jobs:
         # would notice the declared minimum drifting out of support -- which is
         # exactly what happened: >=1.8.0 was declared for months while 1.8
         # through 1.13 could not register a single tool.
-        mcp: ["1.14.0", "1.29.0", "2.0.0"]
+        mcp: ["1.21.1", "1.29.0", "2.0.0"]
     steps:
       - uses: actions/checkout@v5
         with:
