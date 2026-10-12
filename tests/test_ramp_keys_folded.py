@@ -31,6 +31,9 @@ class _Parm:
     def __init__(self, name, kind=FLOAT, label=None, ramp=None, changed=True):
         self._name, self._kind, self._label = name, kind, label or name
         self._ramp, self._changed = ramp, changed
+        self.keys = []
+        if ramp is not None:
+            ramp.keys.append(self)
 
     def name(self):
         return self._name
@@ -47,6 +50,9 @@ class _Parm:
     def parentMultiParm(self):  # noqa: N802 - HOM's name
         return self._ramp
 
+    def multiParmInstances(self):  # noqa: N802 - HOM's name
+        return self.keys
+
     def isAtDefault(self):  # noqa: N802 - HOM's name
         return not self._changed
 
@@ -59,7 +65,8 @@ def _ramp_node(path, keys=100, other=()):
     parms = [ramp, *other]
     for i in range(1, keys + 1):
         for suffix in ("pos", "cr", "cg", "cb", "interp"):
-            parms.append(_Parm(f"colorramp{i}{suffix}", label=f"Point {i}", ramp=ramp))
+            # Houdini's key labels carry no index: "Position", "Color".
+            parms.append(_Parm(f"colorramp{i}{suffix}", label=f"{suffix} label", ramp=ramp))
     node = MagicMock()
     node.path.return_value = path
     node.type.return_value.name.return_value = "heightfield_visualize"
@@ -100,6 +107,16 @@ class TestOneNode:
         )
         assert list(reply["parameters"]) == ["colorramp"]
 
+    @pytest.mark.parametrize("pattern", ["pos", "POS LABEL"])
+    def test_a_pattern_every_key_shares_answers_with_the_ramp(self, env, monkeypatch, pattern):
+        # `pos` named all 100 keys and listed them one by one.
+        node = _ramp_node("/obj/c/hfvis")
+        monkeypatch.setattr(hou, "node", lambda path: node)
+        reply = parameters._get_parameters(
+            node_path="/obj/c/hfvis", patterns=[pattern], non_default_only=True
+        )
+        assert list(reply["parameters"]) == ["colorramp"]
+
     def test_a_key_that_holds_the_needle_is_listed(self, env, monkeypatch):
         # The ramp's own raw value is its key count: folding would hide the key.
         node = _ramp_node("/obj/c/hfvis", keys=3)
@@ -135,3 +152,15 @@ def test_a_sweep_reaches_the_edit_on_the_fifth_node(env, monkeypatch):
     assert ("/obj/c/hfvis5", "heightscale") in [(r["node"], r["parm"]) for r in reply["rows"]]
     assert len(reply["rows"]) == 6
     assert reply["truncated"] is False
+
+
+def test_a_sweep_answers_a_shared_key_pattern_with_one_row_per_ramp(env, monkeypatch):
+    nodes = [_ramp_node(f"/obj/c/hfvis{i}") for i in range(1, 4)]
+    parent = MagicMock()
+    parent.path.return_value = "/obj/c"
+    parent.children.return_value = nodes
+    parent.isLockedHDA.return_value = False
+    parent.isInsideLockedHDA.return_value = False
+    monkeypatch.setattr(hou, "node", lambda path: parent)
+    reply = parameters._get_parameters(inside="/obj/c", patterns=["pos"], non_default_only=True)
+    assert [r["parm"] for r in reply["rows"]] == ["colorramp"] * 3

@@ -509,6 +509,12 @@ def _menu_pairs(spec: dict) -> tuple:
     items = spec.get("menu_items")
     if not items:
         raise ValueError(f"Menu parameter {spec.get('name')!r} needs menu_items.")
+    # A string iterates as its characters: "abc" made a menu of a, b, c.
+    if isinstance(items, str):
+        raise ValueError(
+            f"menu_items on {spec.get('name')!r} must be a list, e.g. "
+            f'["low", "high"] or [["low", "Low"], ["high", "High"]], not {items!r}.'
+        )
     values, labels = [], []
     for item in items:
         if isinstance(item, (list, tuple)):

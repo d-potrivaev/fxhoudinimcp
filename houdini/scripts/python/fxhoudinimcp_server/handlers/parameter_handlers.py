@@ -1752,7 +1752,9 @@ def _ramp_key_folded(parm: hou.Parm, lowered: list[str] | None) -> bool:
     a Copernicus heightfield_visualize was 500 rows: 60 per node ran out at
     the twelfth key, and a sweep of five such nodes spent its 2000 rows on
     four and lost an edit on the fifth (22.0.429). A key a pattern names
-    apart from its ramp (`ramp2` but not `ramp`) is still listed.
+    apart from its ramp (`ramp2`, `ramp2pos`) is still listed. A pattern
+    every key shares (`pos`, or `value` in the label) names no key: it is
+    answered by the ramp, see _ramp_named_by_key.
     """
     try:
         if not parm.isMultiParmInstance():
@@ -1762,12 +1764,33 @@ def _ramp_key_folded(parm: hou.Parm, lowered: list[str] | None) -> bool:
             return False
     except Exception:
         return False
-    named_apart = (
-        lowered is not None
-        and _matches_patterns(parm, lowered)
-        and not _matches_patterns(ramp, lowered)
-    )
+    if lowered is None or _matches_patterns(ramp, lowered):
+        return True
+    # Key labels ("Position", "Value") are the same on every key: only the
+    # index in the name sets one key apart. ramp2pos -> ramppos.
+    name = parm.name().lower()
+    generic = re.sub(r"\d+", "", name)
+    named_apart = any(p in name and p not in generic for p in lowered)
     return not named_apart
+
+
+def _ramp_named_by_key(parm: hou.Parm, lowered: list[str] | None) -> bool:
+    """Whether a pattern matches *parm*'s keys though not *parm*, a ramp.
+
+    `pos` on a colour ramp named every key and listed 100 of them; the keys
+    fold into the ramp, so the ramp is the answer.
+    """
+    if lowered is None:
+        return False
+    try:
+        if parm.parmTemplate().type() != hou.parmTemplateType.Ramp:
+            return False
+        return any(
+            _matches_patterns(key, lowered) and _ramp_key_folded(key, lowered)
+            for key in parm.multiParmInstances()
+        )
+    except Exception:
+        return False
 
 
 def _matches_patterns(parm: hou.Parm, lowered: list[str] | None) -> bool:
@@ -1863,10 +1886,13 @@ def _get_parameters(
         # A folder stores its open tab: a switched tab read as "changed".
         if (non_default_only or needle is not None) and _valueless(parm):
             continue
-        if not _matches_patterns(parm, lowered):
+        folds = non_default_only and needle is None
+        if not _matches_patterns(parm, lowered) and not (
+            folds and _ramp_named_by_key(parm, lowered)
+        ):
             continue
         # A key that holds the needle is the answer, not part of its ramp.
-        if non_default_only and needle is None and _ramp_key_folded(parm, lowered):
+        if folds and _ramp_key_folded(parm, lowered):
             continue
         if non_default_only and not _off_default(parm):
             continue
@@ -1985,10 +2011,13 @@ def _sweep_parameters(
             with contextlib.suppress(Exception):
                 if parm.parmTemplate().type().name() in _VALUELESS_PARM_TYPES:
                     continue
-            if not _matches_patterns(parm, lowered):
+            folds = non_default_only and needle is None
+            if not _matches_patterns(parm, lowered) and not (
+                folds and _ramp_named_by_key(parm, lowered)
+            ):
                 continue
             # A key that holds the needle is the answer, not part of its ramp.
-            if non_default_only and needle is None and _ramp_key_folded(parm, lowered):
+            if folds and _ramp_key_folded(parm, lowered):
                 continue
             if non_default_only and not _off_default(parm):
                 continue

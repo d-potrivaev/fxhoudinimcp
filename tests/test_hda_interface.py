@@ -344,6 +344,12 @@ class TestBuildParmTemplate:
         assert t.kwargs["menu_items"] == ("a", "b")
         assert t.kwargs["menu_labels"] == ("a", "b")
 
+    def test_a_single_string_is_refused_not_split_into_characters(self, interface_env):
+        with pytest.raises(ValueError, match="must be a list"):
+            hda._build_parm_template(
+                {"name": "material", "type": "menu", "menu_items": "abc"}, set()
+            )
+
     def test_a_menu_index_default_is_range_checked(self, interface_env):
         with pytest.raises(ValueError, match="out of range"):
             hda._build_parm_template(
