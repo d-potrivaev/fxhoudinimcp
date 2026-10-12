@@ -1865,7 +1865,8 @@ def _get_parameters(
             continue
         if not _matches_patterns(parm, lowered):
             continue
-        if non_default_only and _ramp_key_folded(parm, lowered):
+        # A key that holds the needle is the answer, not part of its ramp.
+        if non_default_only and needle is None and _ramp_key_folded(parm, lowered):
             continue
         if non_default_only and not _off_default(parm):
             continue
@@ -1986,7 +1987,8 @@ def _sweep_parameters(
                     continue
             if not _matches_patterns(parm, lowered):
                 continue
-            if non_default_only and _ramp_key_folded(parm, lowered):
+            # A key that holds the needle is the answer, not part of its ramp.
+            if non_default_only and needle is None and _ramp_key_folded(parm, lowered):
                 continue
             if non_default_only and not _off_default(parm):
                 continue

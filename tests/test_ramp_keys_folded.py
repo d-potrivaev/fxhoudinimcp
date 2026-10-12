@@ -100,6 +100,18 @@ class TestOneNode:
         )
         assert list(reply["parameters"]) == ["colorramp"]
 
+    def test_a_key_that_holds_the_needle_is_listed(self, env, monkeypatch):
+        # The ramp's own raw value is its key count: folding would hide the key.
+        node = _ramp_node("/obj/c/hfvis", keys=3)
+        monkeypatch.setattr(hou, "node", lambda path: node)
+        monkeypatch.setattr(
+            parameters, "_holds_text", lambda parm, needle: parm.name() == "colorramp2pos"
+        )
+        reply = parameters._get_parameters(
+            node_path="/obj/c/hfvis", non_default_only=True, value_contains="/obj/gone"
+        )
+        assert list(reply["parameters"]) == ["colorramp2pos"]
+
     def test_without_non_default_only_the_keys_are_listed_as_before(self, env, monkeypatch):
         node = _ramp_node("/obj/c/hfvis", keys=2)
         monkeypatch.setattr(hou, "node", lambda path: node)
