@@ -1995,7 +1995,9 @@ def broken_references(parm: hou.Parm) -> list[str]:
     Houdini evaluates such a reference to 0 or "" and reports nothing: no error,
     no warning, and the node cooks clean. A terrain whose height reads a missing
     ../CTRL null goes flat while every check says healthy, so this looks. Paths
-    built at runtime ($OS) are skipped rather than guessed at.
+    built at runtime ($OS) are skipped rather than guessed at, and so is a parm
+    still at its factory default: that expression is the node type's, not the
+    caller's.
     """
     # Cheap gate first: this runs over every parm of every node in a verify,
     # and _outgoing_reference raises and swallows on each plain value.
@@ -2007,6 +2009,13 @@ def broken_references(parm: hou.Parm) -> list[str]:
             return []
     except Exception:
         return []
+    # A factory default is the node type's own, and Houdini evaluates it where
+    # it means something: popsteerseek's `state` reads ch("statemethod") off
+    # the crowd state, not the node. Twelve popsteer* nodes came back with an
+    # error the node does not have (node.errors() empty).
+    with contextlib.suppress(Exception):
+        if parm.isAtDefault() is True:
+            return []
     entry = _outgoing_reference(parm)
     return [
         f"{parm.name()}: reference '{token}' does not resolve, so it silently "
