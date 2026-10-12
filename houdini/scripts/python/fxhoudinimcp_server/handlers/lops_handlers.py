@@ -638,6 +638,9 @@ register_handler("lops.list_usd_prims", _list_usd_prims)
 
 ###### lops.get_usd_attribute
 
+#: Sample times (and, with all_samples, values) one get_usd_attribute answers.
+_SAMPLE_CAP = 64
+
 
 def _get_usd_attribute(
     *,
@@ -648,6 +651,7 @@ def _get_usd_attribute(
     full: bool = False,
     offset: int = 0,
     limit: int = 64,
+    all_samples: bool = False,
 ) -> dict[str, Any]:
     """Read a USD attribute value at an optional time code.
 
@@ -661,7 +665,8 @@ def _get_usd_attribute(
     `is_authored: true` read as "the attribute is empty". With no *time*
     given and samples present, the current frame is read instead (the first
     sample when the frame is outside the sampled range), and the reply names
-    the time it used and the samples it found.
+    the time it used and the samples it found: `sample_times` (up to
+    _SAMPLE_CAP of them) and, with *all_samples*, the value at each.
     """
     stage = _get_lop_stage(node_path)
 
@@ -701,6 +706,18 @@ def _get_usd_attribute(
     if samples:
         reply["time_samples"] = len(samples)
         reply["time_range"] = [samples[0], samples[-1]]
+        # The times themselves: motion blur writes subframes (17.8575 ...
+        # 22.1425 around frame 20), which a count and a range do not show,
+        # and reading them meant GetTimeSamples() through execute_python.
+        reply["sample_times"] = samples[:_SAMPLE_CAP]
+        if len(samples) > _SAMPLE_CAP:
+            reply["sample_times_truncated"] = True
+        if all_samples:
+            array_limit = None if full else _ARRAY_SUMMARY_LIMIT
+            reply["samples"] = [
+                {"time": t, "value": _usd_value_to_python(attr.Get(Usd.TimeCode(t)), array_limit)}
+                for t in samples[:_SAMPLE_CAP]
+            ]
         if time is None:
             reply["note"] = (
                 f"'{attr_name}' is time-sampled ({len(samples)} samples over "

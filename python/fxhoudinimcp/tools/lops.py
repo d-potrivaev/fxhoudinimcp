@@ -137,6 +137,7 @@ async def get_usd_attribute(
     full: bool = False,
     offset: int = 0,
     limit: int = 64,
+    all_samples: bool = False,
 ) -> dict:
     """Read a USD attribute value from a prim.
 
@@ -150,7 +151,9 @@ async def get_usd_attribute(
     has nothing in its default slot: read with no time it answers null. With
     no `time` given, the current frame is read instead, and the reply carries
     `time`, `time_source`, `time_samples` and `time_range`, so `value: null`
-    never stands unexplained next to `is_authored: true`.
+    never stands unexplained next to `is_authored: true`. A time-sampled
+    attribute also lists its `sample_times` (up to 64, motion blur's
+    subframes included); all_samples=True adds the value at each of them.
 
     Args:
         node_path: LOP node path.
@@ -161,6 +164,8 @@ async def get_usd_attribute(
         full: Return the whole array as `value`.
         offset: First element of the window for a long array.
         limit: Window size for a long array.
+        all_samples: Also return `samples`: [{time, value}] for every time
+            sample (up to 64); a long array is summarised unless full=True.
     """
     bridge = _get_bridge(ctx)
     params: dict[str, Any] = {
@@ -176,6 +181,8 @@ async def get_usd_attribute(
         params["offset"] = offset
     if limit != 64:
         params["limit"] = limit
+    if all_samples:
+        params["all_samples"] = True
     return await bridge.execute("lops.get_usd_attribute", params)
 
 
