@@ -157,6 +157,15 @@ def _delete_nodes(node_paths: list) -> dict:
         for path in nodes
         if any(path.startswith(other + "/") for other in nodes if other != path)
     )
+    # destroy() refuses these, after the ones before them in the list are gone.
+    locked = [
+        path for path, node in nodes.items() if path not in inside and node.isInsideLockedHDA()
+    ]
+    if locked:
+        raise PermissionError(
+            f"Inside a locked asset, nothing deleted: {locked}. Unlock it "
+            "(allow editing of contents) or delete the asset itself."
+        )
     deleted = []
     for path, node in sorted(nodes.items()):
         if path in inside:

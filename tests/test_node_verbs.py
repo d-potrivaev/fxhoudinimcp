@@ -297,8 +297,10 @@ class TestPressButton:
 
 
 class TestDeleteNodes:
-    def _scene(self, monkeypatch, paths):
+    def _scene(self, monkeypatch, paths, locked=()):
         made = {path: _node(path) for path in paths}
+        for path, node in made.items():
+            node.isInsideLockedHDA.return_value = path in locked
         monkeypatch.setattr(nodes.hou, "node", made.get)
         return made
 
@@ -323,6 +325,23 @@ class TestDeleteNodes:
         with pytest.raises(ValueError, match=r"nothing deleted: \['/obj/d/zz'\]"):
             nodes.delete_node(node_paths=["/obj/d/a", "/obj/d/zz"])
         made["/obj/d/a"].destroy.assert_not_called()
+
+    def test_a_node_inside_a_locked_asset_deletes_nothing(self, monkeypatch):
+        # destroy() refuses it only after the paths sorted before it are gone.
+        made = self._scene(
+            monkeypatch, ["/obj/d/a", "/obj/d/toy/inner"], locked={"/obj/d/toy/inner"}
+        )
+        with pytest.raises(PermissionError, match=r"nothing deleted: \['/obj/d/toy/inner'\]"):
+            nodes.delete_node(node_paths=["/obj/d/a", "/obj/d/toy/inner"])
+        made["/obj/d/a"].destroy.assert_not_called()
+
+    def test_the_locked_asset_itself_takes_its_contents(self, monkeypatch):
+        made = self._scene(
+            monkeypatch, ["/obj/d/toy", "/obj/d/toy/inner"], locked={"/obj/d/toy/inner"}
+        )
+        reply = nodes.delete_node(node_paths=["/obj/d/toy/inner", "/obj/d/toy"])
+        assert reply["deleted_nodes"] == ["/obj/d/toy"]
+        made["/obj/d/toy"].destroy.assert_called_once()
 
     def test_both_or_neither_is_refused(self):
         with pytest.raises(ValueError, match="not both and not neither"):
