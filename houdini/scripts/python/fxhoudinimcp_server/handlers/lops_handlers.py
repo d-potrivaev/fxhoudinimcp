@@ -7,6 +7,7 @@ All functions run on the main thread via the dispatcher.
 from __future__ import annotations
 
 # Built-in
+import bisect
 import contextlib
 import fnmatch
 import functools
@@ -638,6 +639,9 @@ register_handler("lops.list_usd_prims", _list_usd_prims)
 
 ###### lops.get_usd_attribute
 
+#: Sample times (and, with all_samples, values) one get_usd_attribute answers.
+_SAMPLE_CAP = 64
+
 
 def _get_usd_attribute(
     *,
@@ -648,6 +652,7 @@ def _get_usd_attribute(
     full: bool = False,
     offset: int = 0,
     limit: int = 64,
+    all_samples: bool = False,
 ) -> dict[str, Any]:
     """Read a USD attribute value at an optional time code.
 
@@ -661,8 +666,12 @@ def _get_usd_attribute(
     `is_authored: true` read as "the attribute is empty". With no *time*
     given and samples present, the current frame is read instead (the first
     sample when the frame is outside the sampled range), and the reply names
-    the time it used and the samples it found.
+    the time it used and the samples it found: `sample_times` (up to
+    _SAMPLE_CAP of them) and, with *all_samples*, the value at each.
     """
+    if all_samples and full:
+        # 64 whole arrays: a 2000-point mesh was 2.3 MB of JSON.
+        raise ValueError("all_samples summarises each array; read one time with full=True instead.")
     stage = _get_lop_stage(node_path)
 
     prim = stage.GetPrimAtPath(prim_path)
@@ -701,6 +710,28 @@ def _get_usd_attribute(
     if samples:
         reply["time_samples"] = len(samples)
         reply["time_range"] = [samples[0], samples[-1]]
+        # The times themselves: motion blur writes subframes (17.8575 ...
+        # 22.1425 around frame 20), which a count and a range do not show,
+        # and reading them meant GetTimeSamples() through execute_python.
+        # Past the cap, the window is centred on the time read: the first 64
+        # of 5000 samples said nothing about frame 1000's subframes.
+        start = 0
+        if len(samples) > _SAMPLE_CAP:
+            if time_used is not None:
+                start = bisect.bisect_left(samples, time_used) - _SAMPLE_CAP // 2
+                start = min(max(start, 0), len(samples) - _SAMPLE_CAP)
+            reply["sample_times_truncated"] = True
+            reply["sample_times_start"] = start
+        window = samples[start : start + _SAMPLE_CAP]
+        reply["sample_times"] = window
+        if all_samples:
+            reply["samples"] = [
+                {
+                    "time": t,
+                    "value": _usd_value_to_python(attr.Get(Usd.TimeCode(t)), _ARRAY_SUMMARY_LIMIT),
+                }
+                for t in window
+            ]
         if time is None:
             reply["note"] = (
                 f"'{attr_name}' is time-sampled ({len(samples)} samples over "
