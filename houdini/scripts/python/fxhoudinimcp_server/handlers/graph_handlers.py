@@ -45,6 +45,7 @@ from fxhoudinimcp_server.handlers.node_handlers import (
 from fxhoudinimcp_server.handlers.parameter_handlers import (
     LockedParmError,
     _clear_expression,
+    _factory_type,
     _is_locked,
     _run_callback,
     _wrapped_expression,
@@ -537,12 +538,19 @@ def _on_created_templates(category_name: str, node_type) -> list:
     validation probe and the build itself do, and only for a type that has
     an OnCreated section. Cached per type for the session; [] when the
     probe fails, so a card is never refused over it.
+
+    Only for an asset shipped under $HFS: a Labs biome node's OnCreated writes
+    default JSON files under $HIP/data/biome, and a studio's or the user's
+    own asset may do anything. A documentation read must not.
     """
     definition = None
     with contextlib.suppress(Exception):
         definition = node_type.definition()
     if definition is None:
         return []
+    with contextlib.suppress(Exception):
+        if not _factory_type(node_type):
+            return []
     try:
         if "OnCreated" not in definition.sections():
             return []

@@ -449,6 +449,7 @@ class TestTheCardListsParmsAddedOnCreate:
         monkeypatch.setattr(graph, "_definition_stamp", lambda node_type: None)
         monkeypatch.setattr(graph, "_container_for", lambda category: "lopnet")
         monkeypatch.setattr(graph, "_help_text", lambda resolved, context: None)
+        monkeypatch.setattr(graph, "_factory_type", lambda node_type: True)
 
     def _probe(self):
         probe = _probe([])
@@ -508,6 +509,16 @@ class TestTheCardListsParmsAddedOnCreate:
         monkeypatch.setattr(hou, "node", lambda path: root)
         assert graph._on_created_templates("Lop", node_type) == []
         scratch.destroy.assert_called_once()
+
+    def test_an_asset_from_outside_hfs_is_not_created(self, monkeypatch):
+        # A Labs biome node's OnCreated writes JSON under $HIP/data/biome.
+        monkeypatch.setattr(graph, "_factory_type", lambda node_type: False)
+        node_type = MagicMock()
+        node_type.definition.return_value = _definition({"OnCreated": object()})
+        root = MagicMock()
+        monkeypatch.setattr(hou, "node", lambda path: root)
+        assert graph._on_created_templates("Sop", node_type) == []
+        root.createNode.assert_not_called()
 
 
 class TestTheCardListsEverySignatureOfAVop:
