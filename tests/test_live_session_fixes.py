@@ -62,7 +62,7 @@ class TestBrokenReferences:
         parm.expression.assert_not_called()
 
 
-def _backtick_parm(raw, at_default):
+def _backtick_parm(raw, at_default, spare=False):
     """A string parm holding *raw* in backticks, at its factory default or not."""
     parm = MagicMock()
     parm.name.return_value = "state"
@@ -72,7 +72,9 @@ def _backtick_parm(raw, at_default):
     parm.unexpandedString.return_value = raw
     parm.expression.side_effect = Exception("no expression")
     parm.isAtDefault.return_value = at_default
+    parm.isSpare.return_value = spare
     parm.node.return_value.parm.return_value = None
+    parm.node.return_value.type.return_value.definition.return_value = None
     return parm
 
 
@@ -86,6 +88,11 @@ class TestFactoryDefaultReferences:
 
     def test_the_same_text_written_by_the_user_still_is(self):
         (message,) = parameters.broken_references(_backtick_parm(self.RAW, False))
+        assert "statemethod" in message
+
+    def test_a_spare_built_with_that_default_still_is(self):
+        """A default_expression on a spare is the caller's, not SideFX's."""
+        (message,) = parameters.broken_references(_backtick_parm(self.RAW, True, spare=True))
         assert "statemethod" in message
 
 
