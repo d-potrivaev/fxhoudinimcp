@@ -378,8 +378,9 @@ def _no_prompts(tool_name: str, selection: list | None = None, tool: Any = None)
                 setattr(owner, name, original)
 
 
-# The node type a tool script hands to toolutils' genericTool, which builds it.
-_GENERIC_TOOL_RE = re.compile(r"genericTool\(\s*kwargs\s*,\s*['\"]([^'\"]+)['\"]")
+# The (toolutils module, node type) a tool script hands to genericTool, which
+# builds it: soptoolutils' 'material' is a SOP, shoptoolutils' a SHOP.
+_GENERIC_TOOL_RE = re.compile(r"(\w+)\.genericTool\(\s*kwargs\s*,\s*['\"]([^'\"]+)['\"]")
 
 
 def _prompt_free_alternatives(script: str, tools: dict, tool_name: str) -> dict[str, str]:
@@ -394,21 +395,32 @@ def _prompt_free_alternatives(script: str, tools: dict, tool_name: str) -> dict[
     loads on first access, and reading all 8091 took 23 s on 22.0.429 -- the
     refusal waited for it. dop_rbdpackedobject holds rbdpackedobject.
     """
-    wanted = dict.fromkeys(_GENERIC_TOOL_RE.findall(script))
+    wanted = set(_GENERIC_TOOL_RE.findall(script))
     if not wanted:
         return {}
     found: dict[str, str] = {}
     for name, other in sorted(tools.items()):
-        if name == tool_name or not any(node_type in name for node_type in wanted):
+        if name == tool_name or not any(node_type in name for _, node_type in wanted):
             continue
         try:
             text = other.script() or ""
         except Exception:
             continue
-        for node_type in _GENERIC_TOOL_RE.findall(text):
-            if node_type in wanted and node_type not in found and not interactive_markers(text):
+        for module, node_type in _GENERIC_TOOL_RE.findall(text):
+            if (
+                (module, node_type) in wanted
+                and node_type not in found
+                and not interactive_markers(text)
+            ):
                 found[node_type] = name
     return found
+
+
+# Said when _remove_new leaves the scene alone.
+_KEPT_HALF_SETUP = (
+    " It had moved, collapsed or retyped existing nodes, so nothing it built was "
+    "removed: one undo takes the whole run back."
+)
 
 
 def _refusal(tool_name: str, why: str) -> ValueError:
@@ -440,14 +452,20 @@ def _new_by_path(tree: dict[int, hou.Node], before: dict[int, hou.Node]) -> dict
     return {node.path(): node for sid, node in tree.items() if sid not in before}
 
 
-def _remove_new(watched: list, before: dict[int, hou.Node]) -> list[str]:
+def _remove_new(watched: list, before: dict[int, hou.Node]) -> list[str] | None:
     """Destroy what a run created under *watched*, inside existing networks too.
 
     Whatever a tool built before it asked for a click or failed is half a
     setup: dop_rbdpackedobject, failing, left rest1 without an input and a DOP
-    object without an output. Returns the paths removed.
+    object without an output. Returns the paths removed, or None, touching
+    nothing, when a node from before is gone: collapseIntoSubnet, moveNodesTo
+    and changeNodeType give the artist's own nodes new session ids, so they
+    would read as new and be destroyed with what the tool built (21.0.440).
     """
-    made = _new_by_path(_tree(watched), before)
+    tree = _tree(watched)
+    if any(sid not in tree for sid in before):
+        return None
+    made = _new_by_path(tree, before)
     removed = []
     for path in sorted(made):
         if path.rsplit("/", 1)[0] in made:
@@ -456,6 +474,14 @@ def _remove_new(watched: list, before: dict[int, hou.Node]) -> list[str]:
             made[path].destroy()
             removed.append(path)
     return removed
+
+
+def _restore_dop_network(target: hou.Node | None, before: str | None) -> None:
+    """Undo dop_network's switch when the run built nothing: it is the artist's."""
+    if target is None or before is None:
+        return
+    with contextlib.suppress(Exception):
+        hou.setCurrentDopNet(hou.node(before))
 
 
 def _is_sop_tool(tool: Any) -> bool:
@@ -523,8 +549,7 @@ def run_shelf_tool(
         refusal = _refusal(tool_name, ", ".join(blocking[:3]))
         if alternatives := _prompt_free_alternatives(script, tools, tool_name):
             refusal = ValueError(
-                f"{refusal} Each branch of its dialog is also a tool that asks "
-                f"nothing: {alternatives}."
+                f"{refusal} Tools that build the same node types without asking: {alternatives}."
             )
         raise refusal
 
@@ -586,6 +611,7 @@ def run_shelf_tool(
     retry_as_ctrl_click = not any((kwargs or {}).get(key) for key in modifiers)
     ran_as_ctrl_click = False
     refused: InteractivePrompt | None = None
+    kept = ""
     placed_in = None
     try:
         with contextlib.ExitStack() as stack:
@@ -605,10 +631,13 @@ def run_shelf_tool(
                     break
                 except InteractivePrompt as exc:
                     # Whatever the tool created before asking is half a setup;
-                    # remove it, inside existing networks too.
-                    _remove_new(watched, before)
+                    # remove it, inside existing networks too. A retry on a
+                    # scene that could not be put back would build on it.
+                    if _remove_new(watched, before) is None:
+                        kept = _KEPT_HALF_SETUP
                     if (
-                        isinstance(exc, UnusableSelection)
+                        kept
+                        or isinstance(exc, UnusableSelection)
                         or not retry_as_ctrl_click
                         or ran_as_ctrl_click
                     ):
@@ -621,6 +650,7 @@ def run_shelf_tool(
         # An AttributeError inside SideFX's script was re-raised bare, with
         # the half setup left in the scene.
         removed = _remove_new(watched, before)
+        _restore_dop_network(dop_target, dop_before)
         if isinstance(exc, AttributeError) and "'hou' has no attribute 'ui'" in str(exc):
             raise hou.OperationFailed(
                 f"Shelf tool '{tool_name}' needs a graphical Houdini: it calls "
@@ -628,19 +658,23 @@ def run_shelf_tool(
                 f"recipe with get_shelf_tool_script and build the network "
                 f"directly instead."
             ) from exc
-        left = (
-            f" The {len(removed)} node(s) it had built were removed: {removed[:_LIST_CAP]}."
-            if removed
-            else ""
-        )
+        if removed is None:
+            left = _KEPT_HALF_SETUP
+        elif removed:
+            left = f" The {len(removed)} node(s) it had built were removed: {removed[:_LIST_CAP]}."
+        else:
+            left = ""
+        message = str(exc)[:200].rstrip(".")
         raise hou.OperationFailed(
-            f"Shelf tool '{tool_name}' failed: {type(exc).__name__}: {str(exc)[:200]}.{left}"
+            f"Shelf tool '{tool_name}' failed: {type(exc).__name__}: {message}.{left}"
         ) from exc
 
-    if isinstance(refused, UnusableSelection):
-        raise ValueError(f"Shelf tool '{tool_name}': {refused}.") from refused
     if refused is not None:
-        raise _refusal(tool_name, f"{refused}()") from refused
+        _restore_dop_network(dop_target, dop_before)
+    if isinstance(refused, UnusableSelection):
+        raise ValueError(f"Shelf tool '{tool_name}': {refused}.{kept}") from refused
+    if refused is not None:
+        raise ValueError(f"{_refusal(tool_name, f'{refused}()')}{kept}") from refused
 
     tree = _tree(watched)
     after = _new_by_path(tree, before)

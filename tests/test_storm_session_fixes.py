@@ -702,6 +702,39 @@ def test_a_failing_tool_removes_what_it_built_and_names_it(monkeypatch):
     nodes["/obj/sphere1"].destroy.assert_not_called()
 
 
+def test_a_failing_tool_that_moved_existing_nodes_removes_nothing(monkeypatch):
+    # collapseIntoSubnet gives the artist's nodes new session ids: read as new,
+    # they were destroyed with the subnet the tool built (21.0.440).
+    nodes = {"/obj/user": _FakeObject("/obj/user"), "/obj/user/box": _FakeObject("/obj/user/box")}
+    shelf_handlers, _ = _shelf_scene(monkeypatch, nodes)
+    monkeypatch.setattr(shelf_handlers.hou, "OperationFailed", _ScriptFailed)
+
+    def collapses_then_fails(_kwargs):
+        del nodes["/obj/user/box"]
+        nodes["/obj/user/subnet1"] = _FakeObject("/obj/user/subnet1", "subnet")
+        nodes["/obj/user/subnet1/box"] = _FakeObject("/obj/user/subnet1/box", "box")
+        raise RuntimeError("boom.")
+
+    with pytest.raises(_ScriptFailed, match=r"boom\. It had moved.*one undo") as raised:
+        shelf_handlers.run_shelf_tool("the_tool", kwargs={"run": collapses_then_fails})
+
+    assert "boom.." not in str(raised.value)
+    nodes["/obj/user/subnet1"].destroy.assert_not_called()
+    nodes["/obj/user/subnet1/box"].destroy.assert_not_called()
+
+
+def test_a_failed_run_puts_the_artist_s_dop_network_back(monkeypatch):
+    shelf_handlers, nodes, current = _dop_scene(monkeypatch)
+    monkeypatch.setattr(shelf_handlers.hou, "OperationFailed", _ScriptFailed)
+
+    def fails(_kwargs):
+        raise RuntimeError("boom")
+
+    with pytest.raises(_ScriptFailed):
+        shelf_handlers.run_shelf_tool("the_tool", kwargs={"run": fails}, dop_network="/obj/dopB")
+    assert current["net"] is nodes["/obj/dopA"]
+
+
 def test_a_dialog_tool_refusal_names_the_tool_that_asks_nothing(monkeypatch):
     from fxhoudinimcp_server.handlers import shelf_handlers
 
@@ -726,6 +759,9 @@ def test_a_dialog_tool_refusal_names_the_tool_that_asks_nothing(monkeypatch):
         # Its name holds neither type, so its script is never loaded: reading
         # every tool's script took 23 s on 8091 tools.
         "sop_box": tool("soptoolutils.genericTool(kwargs, 'rbdpackedobject')"),
+        # Same type name, another module's genericTool: a different node
+        # (assign_material's 'material' is a SOP, shop_material's a SHOP).
+        "a_rbdpackedobject_sop": tool("soptoolutils.genericTool(kwargs, 'rbdpackedobject')"),
     }
     monkeypatch.setattr(shelf_handlers.hou.shelves, "tools", lambda: tools)
 
