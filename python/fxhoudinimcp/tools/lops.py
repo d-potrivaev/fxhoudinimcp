@@ -152,8 +152,10 @@ async def get_usd_attribute(
     no `time` given, the current frame is read instead, and the reply carries
     `time`, `time_source`, `time_samples` and `time_range`, so `value: null`
     never stands unexplained next to `is_authored: true`. A time-sampled
-    attribute also lists its `sample_times` (up to 64, motion blur's
-    subframes included); all_samples=True adds the value at each of them.
+    attribute also lists its `sample_times` (motion blur's subframes
+    included): up to 64, past that `sample_times_truncated` and the 64 around
+    the time read, from index `sample_times_start`. all_samples=True adds the
+    value at each of them.
 
     Args:
         node_path: LOP node path.
@@ -164,8 +166,8 @@ async def get_usd_attribute(
         full: Return the whole array as `value`.
         offset: First element of the window for a long array.
         limit: Window size for a long array.
-        all_samples: Also return `samples`: [{time, value}] for every time
-            sample (up to 64); a long array is summarised unless full=True.
+        all_samples: Also return `samples`: [{time, value}] for each listed
+            sample time, a long array summarised. Refused with full=True.
     """
     bridge = _get_bridge(ctx)
     params: dict[str, Any] = {

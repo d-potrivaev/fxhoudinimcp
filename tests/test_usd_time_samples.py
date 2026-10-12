@@ -164,22 +164,34 @@ class TestSampleTimes:
         assert reply["sample_times_truncated"] is True
         assert len(reply["samples"]) == lops._SAMPLE_CAP
 
-    def test_a_long_array_per_sample_is_summarised_unless_full(self, monkeypatch):
+    def test_the_window_follows_the_time_read(self, monkeypatch):
+        # 5000 samples read at frame 1000: the first 64 said nothing about it.
+        times = [1.0 + i * 0.25 for i in range(5000)]
+        _stage(monkeypatch, _Attr(samples=times, values={t: t for t in times}, type_name="float"))
+        reply = lops._get_usd_attribute(
+            node_path="/stage/x", prim_path="/p", attr_name="f", time=1000.0
+        )
+        window = reply["sample_times"]
+        assert len(window) == lops._SAMPLE_CAP
+        assert window[0] < 1000.0 < window[-1]
+        assert times[reply["sample_times_start"]] == window[0]
+
+    def test_a_long_array_per_sample_is_summarised_and_full_refused(self, monkeypatch):
         big = list(range(lops._ARRAY_SUMMARY_LIMIT + 4))
         _stage(monkeypatch, _Attr(samples=[1.0], values={1.0: big}, type_name="int[]"))
         reply = lops._get_usd_attribute(
             node_path="/stage/x", prim_path="/p", attr_name="ids", time=1.0, all_samples=True
         )
         assert isinstance(reply["samples"][0]["value"], dict)
-        reply = lops._get_usd_attribute(
-            node_path="/stage/x",
-            prim_path="/p",
-            attr_name="ids",
-            time=1.0,
-            all_samples=True,
-            full=True,
-        )
-        assert reply["samples"][0]["value"] == big
+        with pytest.raises(ValueError, match="all_samples"):
+            lops._get_usd_attribute(
+                node_path="/stage/x",
+                prim_path="/p",
+                attr_name="ids",
+                time=1.0,
+                all_samples=True,
+                full=True,
+            )
 
     def test_a_static_attribute_lists_no_times(self, monkeypatch):
         _stage(monkeypatch, _Attr(values={None: "rightHanded"}, type_name="token"))

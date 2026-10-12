@@ -7,6 +7,7 @@ All functions run on the main thread via the dispatcher.
 from __future__ import annotations
 
 # Built-in
+import bisect
 import contextlib
 import fnmatch
 import functools
@@ -668,6 +669,9 @@ def _get_usd_attribute(
     the time it used and the samples it found: `sample_times` (up to
     _SAMPLE_CAP of them) and, with *all_samples*, the value at each.
     """
+    if all_samples and full:
+        # 64 whole arrays: a 2000-point mesh was 2.3 MB of JSON.
+        raise ValueError("all_samples summarises each array; read one time with full=True instead.")
     stage = _get_lop_stage(node_path)
 
     prim = stage.GetPrimAtPath(prim_path)
@@ -709,14 +713,24 @@ def _get_usd_attribute(
         # The times themselves: motion blur writes subframes (17.8575 ...
         # 22.1425 around frame 20), which a count and a range do not show,
         # and reading them meant GetTimeSamples() through execute_python.
-        reply["sample_times"] = samples[:_SAMPLE_CAP]
+        # Past the cap, the window is centred on the time read: the first 64
+        # of 5000 samples said nothing about frame 1000's subframes.
+        start = 0
         if len(samples) > _SAMPLE_CAP:
+            if time_used is not None:
+                start = bisect.bisect_left(samples, time_used) - _SAMPLE_CAP // 2
+                start = min(max(start, 0), len(samples) - _SAMPLE_CAP)
             reply["sample_times_truncated"] = True
+            reply["sample_times_start"] = start
+        window = samples[start : start + _SAMPLE_CAP]
+        reply["sample_times"] = window
         if all_samples:
-            array_limit = None if full else _ARRAY_SUMMARY_LIMIT
             reply["samples"] = [
-                {"time": t, "value": _usd_value_to_python(attr.Get(Usd.TimeCode(t)), array_limit)}
-                for t in samples[:_SAMPLE_CAP]
+                {
+                    "time": t,
+                    "value": _usd_value_to_python(attr.Get(Usd.TimeCode(t)), _ARRAY_SUMMARY_LIMIT),
+                }
+                for t in window
             ]
         if time is None:
             reply["note"] = (
