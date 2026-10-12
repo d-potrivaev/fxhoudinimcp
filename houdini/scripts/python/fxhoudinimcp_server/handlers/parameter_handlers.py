@@ -1764,7 +1764,9 @@ def _get_parameters(
             needed: "which parameters still name /obj/X" across a scene, a
             deleted node included, was an allSubChildren() walk in
             execute_python; get_parm_references reads one node, and sees no
-            reference to a node that no longer exists.
+            reference to a node that no longer exists. Text, not resolved
+            paths: a relative "../X" does not hold "/obj/X", so search the
+            node's name to catch those too.
     """
     if non_default_only:
         include_defaults = True
@@ -1796,7 +1798,7 @@ def _get_parameters(
     matched = 0
     for parm in node.parms():
         # A folder stores its open tab: a switched tab read as "changed".
-        if non_default_only and _valueless(parm):
+        if (non_default_only or needle is not None) and _valueless(parm):
             continue
         if not _matches_patterns(parm, lowered):
             continue
@@ -1837,13 +1839,14 @@ def _holds_text(parm: hou.Parm, needle: str) -> bool:
     Raw, not evaluated: a reference to a node that no longer exists is still
     there as text ("/obj/X" in a string, `chs("/obj/X/file")`), which is what
     a rename or delete audit is after; evaluating every parameter of a scene
-    would also cook it.
+    would also cook it. Every keyframe's expression is read: rawValue() holds
+    only the one at the current frame.
     """
     texts: list[str] = []
     with contextlib.suppress(Exception):
         texts.append(str(parm.rawValue()))
     with contextlib.suppress(Exception):
-        texts.append(parm.expression())
+        texts.extend(key.expression() for key in parm.keyframes() if key.isExpressionSet())
     return any(needle in text.lower() for text in texts if text)
 
 

@@ -530,8 +530,9 @@ async def get_parameters(
         value_contains: Only parameters whose raw text or expression holds
             this substring (case-insensitive), e.g. inside="/",
             recursive=True, value_contains="/obj/X": every parameter that
-            still names that node, a deleted one included. No patterns
-            needed.
+            still names that node by its absolute path, a deleted one
+            included. A relative "../X" is not "/obj/X": search "X" to catch
+            those. No patterns needed.
         non_default_only: Only parameters changed from their defaults, each
             with its default: "what was changed on every node of this network"
             in one call (with `inside`, no patterns needed).

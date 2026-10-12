@@ -414,12 +414,16 @@ class TestValueContains:
     """Which parameters of a scene still name a node, a deleted one included."""
 
     @staticmethod
-    def _text(name, raw, expression=None):
+    def _text(name, raw, *expressions):
+        """A parm whose keyframes hold *expressions*, one key each."""
         parm = _parm(name, raw)
-        if expression is None:
-            parm.expression.side_effect = _OperationFailed("no expression")
-        else:
-            parm.expression.return_value = expression
+        keys = []
+        for expression in expressions:
+            key = MagicMock()
+            key.isExpressionSet.return_value = True
+            key.expression.return_value = expression
+            keys.append(key)
+        parm.keyframes.return_value = keys
         return parm
 
     def _scene(self, monkeypatch):
@@ -431,7 +435,7 @@ class TestValueContains:
         follower = _node(
             "/obj/fx/follow",
             "xform",
-            [self._text("tx", "0", expression='ch("/obj/gone_node/tx")'), self._text("ty", "0")],
+            [self._text("tx", "0", 'ch("/obj/gone_node/tx")'), self._text("ty", "0")],
         )
         bystander = _node("/obj/fx/other", "null", [self._text("file", "/obj/kept_node")])
         root = _node("/", "root", [])
@@ -477,6 +481,14 @@ class TestValueContains:
         result = parameters._get_parameters("/obj/fx/follow", value_contains="GONE_NODE")
         assert list(result["parameters"]) == ["tx"]
         assert result["value_contains"] == "GONE_NODE"
+
+    def test_a_key_away_from_the_current_frame_is_read(self, monkeypatch):
+        # rawValue() is the current frame's key only.
+        tz = self._text("tz", "bezier()", "bezier()", 'ch("/obj/gone_node/tz")')
+        node = _node("/obj/fx/follow", "xform", [tz])
+        monkeypatch.setattr(parameters.hou, "node", lambda path: node)
+        result = parameters._get_parameters("/obj/fx/follow", value_contains="/obj/gone_node")
+        assert list(result["parameters"]) == ["tz"]
 
     def test_an_empty_needle_is_refused(self, monkeypatch):
         self._scene(monkeypatch)
