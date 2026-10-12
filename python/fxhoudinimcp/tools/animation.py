@@ -148,6 +148,12 @@ async def set_frame_range(ctx: Context, start: float, end: float) -> dict:
 async def set_playback_range(ctx: Context, start: float, end: float) -> dict:
     """Set the playback range (green bar in the timeline).
 
+    A range past the global frame range widens the global range to hold it
+    (a graphical Houdini would clamp the playback range silently); the reply
+    then has `frame_range_widened` with the global range before and after.
+    That moves $FSTART/$FEND, so ROPs and caches left at their default range
+    follow it.
+
     Args:
         start: Start frame.
         end: End frame.
