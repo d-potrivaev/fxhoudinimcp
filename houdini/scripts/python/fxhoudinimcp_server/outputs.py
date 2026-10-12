@@ -144,6 +144,12 @@ def reported_outputs(node: hou.Node) -> list[dict[str, Any]]:
         parm = node.parm(name)
         if parm is None:
             continue
+        if name == "file" and any(entry["parm"] == "sopoutput" for entry in found):
+            # A File Cache writes to sopoutput, which follows `file` in Explicit
+            # mode and the constructed path otherwise. In Constructed mode `file`
+            # is hidden and unused, and listed with exists: false it read as a
+            # failed write beside the cache that was written.
+            continue
         try:
             path = parm.eval()
         except hou.OperationFailed:
