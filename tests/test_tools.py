@@ -14,6 +14,7 @@ from fxhoudinimcp.tools.materials import list_materials
 from fxhoudinimcp.tools.nodes import (
     create_network_box,
     create_node,
+    delete_node,
     press_button,
     set_object_transform,
 )
@@ -143,6 +144,16 @@ class TestNodeTools:
             "nodes.create_node",
             {"parent_path": "/obj", "node_type": "geo", "name": "my_geo", "position": [0, 0]},
         )
+
+    @pytest.mark.asyncio
+    async def test_delete_node_sends_only_what_was_given(self, mock_ctx, mock_bridge):
+        await delete_node(mock_ctx, node_path="/obj/a")
+        await delete_node(mock_ctx, node_paths=["/obj/a", "/obj/b"])
+        sent = [call.args for call in mock_bridge.execute.call_args_list]
+        assert sent == [
+            ("nodes.delete_node", {"node_path": "/obj/a"}),
+            ("nodes.delete_node", {"node_paths": ["/obj/a", "/obj/b"]}),
+        ]
 
     @pytest.mark.asyncio
     async def test_press_button_sends_action_only_when_asked(self, mock_ctx, mock_bridge):

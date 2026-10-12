@@ -110,12 +110,20 @@ def create_node(
 ###### nodes.delete_node
 
 
-def delete_node(node_path: str) -> dict:
-    """Delete a node from the scene.
+def delete_node(node_path: str | None = None, node_paths: list | None = None) -> dict:
+    """Delete a node from the scene, or several in one call.
 
     Args:
         node_path: Absolute path to the node to delete.
+        node_paths: Several nodes at once, instead of node_path. Taking 16
+            copied networks apart cost 73 delete_node calls. Every path is
+            checked before anything is deleted; a node inside another one
+            on the list goes with it.
     """
+    if (node_path is None) == (node_paths is None):
+        raise ValueError("Pass node_path or node_paths, not both and not neither.")
+    if node_paths is not None:
+        return _delete_nodes(node_paths)
     node = _get_node(node_path)
     name = node.name()
     parent_path = node.parent().path()
@@ -127,6 +135,51 @@ def delete_node(node_path: str) -> dict:
         "name": name,
         "parent_path": parent_path,
     }
+
+
+def _delete_nodes(node_paths: list) -> dict:
+    """delete_node over a list: every path resolved first, then deleted.
+
+    The dispatcher wraps the command in one undo group, so one undo brings
+    them all back.
+    """
+    if not isinstance(node_paths, (list, tuple)) or not node_paths:
+        raise ValueError("node_paths must be a non-empty list of node paths.")
+    paths = [str(path) for path in node_paths]
+    missing = [path for path in paths if hou.node(path) is None]
+    if missing:
+        raise ValueError(f"Node(s) not found, nothing deleted: {missing}")
+    nodes = {hou.node(path).path(): hou.node(path) for path in paths}
+    # A node under another one on the list is destroyed with it; destroying
+    # it again would raise on a dead node.
+    inside = sorted(
+        path
+        for path in nodes
+        if any(path.startswith(other + "/") for other in nodes if other != path)
+    )
+    # destroy() refuses these, after the ones before them in the list are gone.
+    locked = [
+        path for path, node in nodes.items() if path not in inside and node.isInsideLockedHDA()
+    ]
+    if locked:
+        raise PermissionError(
+            f"Inside a locked asset, nothing deleted: {locked}. Unlock it "
+            "(allow editing of contents) or delete the asset itself."
+        )
+    deleted = []
+    for path, node in sorted(nodes.items()):
+        if path in inside:
+            continue
+        node.destroy()
+        deleted.append(path)
+    reply: dict[str, Any] = {
+        "success": True,
+        "deleted_nodes": deleted,
+        "deleted_count": len(deleted),
+    }
+    if inside:
+        reply["deleted_with_parent"] = inside
+    return reply
 
 
 ###### nodes.rename_node

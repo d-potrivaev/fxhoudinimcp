@@ -1,11 +1,12 @@
-"""Tests for change_node_type and press_button.
+"""Tests for change_node_type, press_button and delete_node over a list.
 
 Two Houdini gestures had no tool: swapping a node's type in place (Type
 Properties "change type", or moving an asset instance to an installed newer
 version without losing its edits) and pressing a button parameter ("Stash
 Input", "Reload Geometry", an asset's Build button). Both were being done
 through execute_python, where the swap silently dropped parameter values and
-a pressed button reported nothing about the node afterwards.
+a pressed button reported nothing about the node afterwards. delete_node
+took one path, so taking 16 copied networks apart cost 73 calls.
 
 hou is mocked here; the live path was checked on Houdini 22.0.429.
 """
@@ -293,3 +294,72 @@ class TestPressButton:
         with pytest.raises(ValueError, match="stash1/stashinput raised RuntimeError: boom"):
             nodes.press_button("/obj/geo1/stash1", "stashinput")
         parm.pressButton.assert_not_called()
+
+
+class TestDeleteNodes:
+    def _scene(self, monkeypatch, paths, locked=()):
+        made = {path: _node(path) for path in paths}
+        for path, node in made.items():
+            node.isInsideLockedHDA.return_value = path in locked
+        monkeypatch.setattr(nodes.hou, "node", made.get)
+        return made
+
+    def test_every_listed_node_is_deleted(self, monkeypatch):
+        made = self._scene(monkeypatch, ["/obj/d/a", "/obj/d/b"])
+        reply = nodes.delete_node(node_paths=["/obj/d/b", "/obj/d/a"])
+        assert reply["deleted_nodes"] == ["/obj/d/a", "/obj/d/b"]
+        assert reply["deleted_count"] == 2
+        assert "deleted_with_parent" not in reply
+        made["/obj/d/a"].destroy.assert_called_once()
+        made["/obj/d/b"].destroy.assert_called_once()
+
+    def test_children_of_listed_parents_go_with_them(self, monkeypatch):
+        made = self._scene(monkeypatch, ["/obj/d/a", "/obj/d/b", "/obj/d/b/c"])
+        reply = nodes.delete_node(node_paths=["/obj/d/a", "/obj/d/b/c", "/obj/d/b"])
+        assert reply["deleted_nodes"] == ["/obj/d/a", "/obj/d/b"]
+        assert reply["deleted_with_parent"] == ["/obj/d/b/c"]
+        made["/obj/d/b/c"].destroy.assert_not_called()
+
+    def test_a_missing_path_deletes_nothing_and_is_named(self, monkeypatch):
+        made = self._scene(monkeypatch, ["/obj/d/a"])
+        with pytest.raises(ValueError, match=r"nothing deleted: \['/obj/d/zz'\]"):
+            nodes.delete_node(node_paths=["/obj/d/a", "/obj/d/zz"])
+        made["/obj/d/a"].destroy.assert_not_called()
+
+    def test_a_node_inside_a_locked_asset_deletes_nothing(self, monkeypatch):
+        # destroy() refuses it only after the paths sorted before it are gone.
+        made = self._scene(
+            monkeypatch, ["/obj/d/a", "/obj/d/toy/inner"], locked={"/obj/d/toy/inner"}
+        )
+        with pytest.raises(PermissionError, match=r"nothing deleted: \['/obj/d/toy/inner'\]"):
+            nodes.delete_node(node_paths=["/obj/d/a", "/obj/d/toy/inner"])
+        made["/obj/d/a"].destroy.assert_not_called()
+
+    def test_the_locked_asset_itself_takes_its_contents(self, monkeypatch):
+        made = self._scene(
+            monkeypatch, ["/obj/d/toy", "/obj/d/toy/inner"], locked={"/obj/d/toy/inner"}
+        )
+        reply = nodes.delete_node(node_paths=["/obj/d/toy/inner", "/obj/d/toy"])
+        assert reply["deleted_nodes"] == ["/obj/d/toy"]
+        made["/obj/d/toy"].destroy.assert_called_once()
+
+    def test_both_or_neither_is_refused(self):
+        with pytest.raises(ValueError, match="not both and not neither"):
+            nodes.delete_node()
+        with pytest.raises(ValueError, match="not both and not neither"):
+            nodes.delete_node(node_path="/obj/a", node_paths=["/obj/b"])
+
+    def test_an_empty_list_is_refused(self):
+        with pytest.raises(ValueError, match="non-empty list"):
+            nodes.delete_node(node_paths=[])
+
+    def test_one_path_answers_as_before(self, monkeypatch):
+        made = self._scene(monkeypatch, ["/obj/d/a"])
+        made["/obj/d/a"].parent.return_value.path.return_value = "/obj/d"
+        reply = nodes.delete_node("/obj/d/a")
+        assert reply == {
+            "success": True,
+            "deleted_node": "/obj/d/a",
+            "name": "a",
+            "parent_path": "/obj/d",
+        }
