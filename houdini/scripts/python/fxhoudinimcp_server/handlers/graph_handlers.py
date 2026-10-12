@@ -169,9 +169,11 @@ def _probe_connectors(scratch: hou.Node, node_type, parms: dict | None = None) -
     """Connectors of *node_type* created inside *scratch* with *parms* applied.
 
     A VOP's `signature`, a multiparm count or a variadic HDA decides what a
-    node exposes, so build_network probes a spec that names an input AND sets
-    parms the way the build will configure it: a dry run that passes then
-    wires the same connectors the build resolves.
+    node exposes, and a Bind VOP's `parmname` names its outputs, so
+    build_network probes a spec that sets parms AND names an input (or has
+    an output another spec takes by name) the way the build will configure
+    it: a dry run that passes then wires the same connectors the build
+    resolves.
     """
     with hou.undos.disabler():
         probe = scratch.createNode(node_type.name())
@@ -425,8 +427,10 @@ def _connectors_for_type(
     given, it is filled from the same probe with the menus a script computes
     (see _generated_menus_of): one probe, two questions. The probe runs with
     undo disabled and without the type's creation scripts (a documentation
-    read must not run an asset's OnCreated); it still marks the scene
-    modified, as build_network's dry run does, once per type per session.
+    read must not run an asset's OnCreated for every type; the parms such a
+    script adds are read by _on_created_templates, only for a type that has
+    one); it still marks the scene modified, as build_network's dry run
+    does, once per type per session.
     A type the usual container refuses is tried again in the category's
     fallback parents (_FALLBACK_PROBE_PARENTS); the first failure is the one
     reported.
@@ -457,6 +461,9 @@ def _connectors_for_type(
                 menus = _generated_menus_of(probe)
                 menus.update(_radio_folder_sets_of(probe))
                 connectors = _connectors_of(probe)
+                # A hint on the card, never a reason to fail the probe.
+                with contextlib.suppress(Exception):
+                    _mark_parm_named_outputs(probe, connectors)
             break
         except Exception as exc:
             first_error = first_error or exc
@@ -471,6 +478,122 @@ def _connectors_for_type(
     if generated_menus is not None:
         generated_menus.update(menus)
     return connectors, None
+
+
+def _mark_parm_named_outputs(probe: hou.Node, connectors: dict) -> None:
+    """Flag the outputs whose names follow the value of a string parm.
+
+    A Bind VOP's outputs are named after its `parmname`: the card's probe,
+    left at the default, reads `parm` and `bound_parm`, while a bind set to
+    `orient` has `orient` and `bound_orient`, and a build wired by the
+    card's name was rolled back. Such an output carries `named_by_parm`, so
+    its name reads as "the value of that parm", not as a fixed name.
+    """
+    outputs = connectors.get("outputs") or []
+    if not outputs:
+        return
+    values: dict[str, str] = {}
+    with contextlib.suppress(Exception):
+        for parm in probe.parms():
+            with contextlib.suppress(Exception):
+                if parm.parmTemplate().type() != hou.parmTemplateType.String:
+                    continue
+                value = parm.evalAsString()
+                if value and value.isidentifier():
+                    values.setdefault(value, parm.name())
+    for entry in outputs:
+        name = entry.get("name") or ""
+        for value, parm_name in values.items():
+            if name == value or name.endswith("_" + value):
+                entry["named_by_parm"] = parm_name
+                break
+
+
+# Parm templates a type's OnCreated script adds, per type for the session.
+# Keyed like _CONNECTOR_CACHE.
+_ON_CREATED_CACHE: dict[tuple, list] = {}
+
+
+def _on_created_templates(category_name: str, node_type) -> list:
+    """Parm templates the type's OnCreated script adds to every new node.
+
+    The Solaris edit-properties nodes build most of their interface there:
+    `rendergeometrysettings` has 16 templates on its type and 180 on a node
+    (loputils.addRendererParmFolders), so a card read off the type answered
+    `parm_count: 0` for "Render Points As". The connector probe skips
+    creation scripts; this second probe runs them, as build_network's
+    validation probe and the build itself do, and only for a type that has
+    an OnCreated section. Cached per type for the session; [] when the
+    probe fails, so a card is never refused over it.
+    """
+    definition = None
+    with contextlib.suppress(Exception):
+        definition = node_type.definition()
+    if definition is None:
+        return []
+    try:
+        if "OnCreated" not in definition.sections():
+            return []
+    except Exception:
+        return []
+    key = (category_name, node_type.name(), _definition_stamp(node_type))
+    if key in _ON_CREATED_CACHE:
+        return _ON_CREATED_CACHE[key]
+    container = _container_for(category_name)
+    root = hou.node("/obj")
+    added: list = []
+    if container is not None and root is not None:
+        scratch = None
+        try:
+            with hou.undos.disabler():
+                scratch = root.createNode(container, "fxhoudinimcp_card_probe")
+                probe = scratch.createNode(node_type.name())
+                known = {
+                    template.name()
+                    for template in node_type.parmTemplateGroup().entriesWithoutFolders()
+                }
+                added = [
+                    template
+                    for template in probe.parmTemplateGroup().entriesWithoutFolders()
+                    if template.name() not in known
+                ]
+        except Exception:
+            added = []
+        finally:
+            with contextlib.suppress(Exception):
+                if scratch is not None:
+                    with hou.undos.disabler():
+                        scratch.destroy()
+    _ON_CREATED_CACHE[key] = added
+    return added
+
+
+_SIGNATURE_LINE_RE = re.compile(r'^\s*signature\s+"([^"]*)"\s+(\S+)\s*\{([^}]*)\}', re.MULTILINE)
+
+
+def _vop_signatures(node_type) -> list[dict[str, Any]]:
+    """Every signature a VOP type defines, read off its DialogScript.
+
+    The live `signature` menu lists only what the node can take as wired: a
+    fresh setattrib offers `default` alone, and the tokens of the others
+    (`f`, `m3`, `v4`) had to be found by probing inputDataTypes() on
+    throwaway nodes. The type's DialogScript names them all, one
+    `signature "Label" token { input types }` line each.
+    """
+    try:
+        definition = node_type.definition()
+        if definition is None:
+            return []
+        text = definition.sections()["DialogScript"].contents()
+    except Exception:
+        return []
+    signatures = []
+    for label, token, types in _SIGNATURE_LINE_RE.findall(text):
+        entry: dict[str, Any] = {"name": token, "label": label}
+        if types.split():
+            entry["input_types"] = types.split()
+        signatures.append(entry)
+    return signatures
 
 
 def _parm_names_for_type(
@@ -1284,8 +1407,9 @@ def build_network(
     locked_knowledge: dict[str, dict[str, list[str]]] = {}
     # Parms a spec would write while they are still locked, per spec label.
     locked_parms: dict[str, dict[str, str]] = {}
-    # Connectors of a spec that names an input and sets parms, probed with
-    # those parms applied (see _probe_connectors).
+    # Connectors of a spec that sets parms and names an input, or whose
+    # output another spec takes by name, probed with those parms applied
+    # (see _probe_connectors).
     spec_connectors: dict[int, dict] = {}
     if resolved_types:
         display_before = parent.displayNode() if hasattr(parent, "displayNode") else None
@@ -1302,6 +1426,16 @@ def build_network(
                     factory_expressions=expression_knowledge[type_name],
                     locked=locked_knowledge[type_name],
                 )
+            # Specs another spec wires from by output NAME: a Bind VOP's
+            # outputs are named after its parmname, so they are read off a
+            # probe with the spec's parms, as its inputs are.
+            named_sources = {
+                entry.get("source")
+                for other in nodes
+                if isinstance(other, dict)
+                for entry in other.get("inputs") or []
+                if isinstance(entry, dict) and isinstance(entry.get("source_output"), str)
+            }
             for index, spec in enumerate(nodes):
                 if not isinstance(spec, dict):
                     continue
@@ -1310,7 +1444,12 @@ def build_network(
                     isinstance(entry, dict) and entry.get("input_name")
                     for entry in spec.get("inputs") or []
                 )
-                if node_type is not None and spec.get("parms") and names_an_input:
+                wired_by_name = spec.get("name") is not None and spec.get("name") in named_sources
+                if (
+                    node_type is not None
+                    and spec.get("parms")
+                    and (names_an_input or wired_by_name)
+                ):
                     spec_connectors[index] = _probe_connectors(parent, node_type, spec["parms"])
                 # A lock is the node's own state, so a spec that writes a parm
                 # a fresh node locks is replayed in order on a probe of its
@@ -1966,7 +2105,13 @@ def get_node_card(
     truncated = False
     omitted: list[str] = []
     matched = 0
-    for template in resolved.parmTemplateGroup().entriesWithoutFolders():
+    # Parms the type's OnCreated script adds are on every new node and on no
+    # template of the type: rendergeometrysettings has 16 templates and 180
+    # parms on a node.
+    added_on_create = _on_created_templates(context, resolved)
+    added_names = {template.name() for template in added_on_create}
+    signatures = _vop_signatures(resolved) if context == "Vop" else []
+    for template in [*resolved.parmTemplateGroup().entriesWithoutFolders(), *added_on_create]:
         name, label = template.name(), template.label()
         if (
             parm_filter
@@ -1999,6 +2144,10 @@ def get_node_card(
         # and so on. Saying so here saves discovering it by trial and error.
         if "#" in name:
             entry["multiparm_instance"] = True
+        if name in added_names:
+            # Not on the type: its OnCreated script adds it to every new
+            # node. Settable like any other parm of the node.
+            entry["added_on_create"] = True
         with contextlib.suppress(Exception):
             entry["default"] = list(template.defaultValue())
         with contextlib.suppress(Exception):
@@ -2027,7 +2176,14 @@ def get_node_card(
             if items and labels and labels != items:
                 entry["menu_labels"] = labels[:_MENU_CAP]
         generated = generated_menus.get(name)
-        if not items and generated:
+        if name == "signature" and len(signatures) > 1:
+            # Every signature the type defines, not the one a fresh node's
+            # menu offers (`default` alone on setattrib); the full table is
+            # the card's `signatures`.
+            items = [signature["name"] for signature in signatures]
+            entry["menu_labels"] = [signature["label"] for signature in signatures][:_MENU_CAP]
+            menu_source = "signatures"
+        elif not items and generated:
             # The template has no items because a script computes them
             # (`opmenu -l -a file1 loadtype` on filemerge::2.0). An empty Menu
             # on the card reads as "no menu", and a session then took its
@@ -2144,6 +2300,15 @@ def get_node_card(
         "parms": parms,
         "multiparms": multiparms,
     }
+    if added_on_create:
+        card["parms_added_on_create"] = len(added_on_create)
+    if len(signatures) > 1:
+        card["signatures"] = signatures
+        card["signatures_note"] = (
+            "Every signature the type defines (DialogScript). A node's own "
+            "`signature` menu lists only what its wired inputs allow; set the "
+            "token as the value."
+        )
     if help_text is not None:
         card["help"] = help_text
     if connectors is not None:

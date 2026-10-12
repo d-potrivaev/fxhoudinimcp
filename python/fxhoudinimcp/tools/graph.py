@@ -48,7 +48,9 @@ async def build_network(
         source names — earlier spec names, existing children, or absolute
         paths; or dicts with index or input_name / source / source_output,
         where input_name is a connector name or label as get_node_card
-        lists them and source_output an output index or name ("v", "P");
+        lists them and source_output an output index or name ("v", "P";
+        names are checked on the source with its parms set, so a Bind
+        VOP with parmname "orient" is wired from "orient");
         or {"indirect_input": n} to wire from connector n of
         the parent subnet itself), flags (display/render/bypass/template),
         color [r,g,b], comment, override_expression, run_callbacks. Parms
@@ -158,7 +160,16 @@ async def get_node_card(
     A radio folder set (`switcher1` on an Add SOP: By Pattern / By Group)
     is listed as a `FolderSet` parm whose menu is its folders; a default
     that is an expression (`$F` on timeshift's `frame`) is in
-    `default_expression`; a VOP's outputs carry their `data_type`.
+    `default_expression`; a VOP's outputs carry their `data_type`, and an
+    output named after a parm's value carries `named_by_parm` (a Bind VOP's
+    `parm` output is called whatever its `parmname` is). Parms the type's
+    OnCreated script adds (Solaris edit-properties nodes: "Render Points As"
+    on rendergeometrysettings is `xn__primvarskarmaobjectpoint_style_zpbfg`)
+    are read off a second probe that runs it, listed with `added_on_create`
+    and counted in `parms_added_on_create`. A VOP with several signatures
+    lists them all in `signatures` (token, label, input types), and its
+    `signature` menu is those tokens (`menu_source: "signatures"`), not only
+    the one a fresh node's menu offers.
 
     Use this BEFORE setting parameters on a node type you have not used
     in this session — never guess parameter names. Unversioned names

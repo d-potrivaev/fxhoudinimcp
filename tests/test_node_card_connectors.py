@@ -610,3 +610,120 @@ class TestBuildNetworkWiresFromAnOutputByName:
         )
         assert result["success"] is True, result
         built.setInput.assert_called_once_with(0, live, 1)
+
+
+def _string_parms(values):
+    parms = []
+    for name, value in values.items():
+        parm = MagicMock()
+        parm.name.return_value = name
+        parm.parmTemplate.return_value.type.return_value = (
+            hou.parmTemplateType.String if isinstance(value, str) else hou.parmTemplateType.Int
+        )
+        parm.evalAsString.return_value = str(value)
+        parms.append(parm)
+    return parms
+
+
+class TestOutputsNamedAfterAParm:
+    """A Bind VOP's outputs are named after its `parmname`.
+
+    The card's probe, at the default, read `parm` and `bound_parm`; a bind
+    set to `orient` has `orient` and `bound_orient`, and a build wired by the
+    card's name was rolled back. Such outputs now carry `named_by_parm`.
+    """
+
+    def test_bind_outputs_are_marked_with_parmname(self):
+        probe = MagicMock()
+        probe.parms.return_value = _string_parms({"parmname": "parm"})
+        connectors = {"outputs": [{"name": "parm"}, {"name": "bound_parm"}, {"name": "other"}]}
+        graph._mark_parm_named_outputs(probe, connectors)
+        named = [entry.get("named_by_parm") for entry in connectors["outputs"]]
+        assert named == ["parmname", "parmname", None]
+
+    def test_only_string_parms_name_an_output(self):
+        probe = MagicMock()
+        probe.parms.return_value = _string_parms({"count": 3, "label": "Parm Value"})
+        connectors = {"outputs": [{"name": "3"}, {"name": "Parm Value"}]}
+        graph._mark_parm_named_outputs(probe, connectors)
+        assert all("named_by_parm" not in entry for entry in connectors["outputs"])
+
+    def test_the_card_probe_marks_them(self, monkeypatch):
+        monkeypatch.setattr(graph, "_CONNECTOR_CACHE", {})
+        monkeypatch.setattr(graph, "_definition_stamp", lambda node_type: None)
+        monkeypatch.setattr(graph, "_container_for", lambda category: "matnet")
+        probe = _probe([], [], outputs=("parm", "bound_parm"))
+        probe.parms.return_value = _string_parms({"parmname": "parm"})
+        root = MagicMock()
+        root.createNode.return_value.createNode.return_value = probe
+        monkeypatch.setattr(hou, "node", lambda path: root)
+        node_type = MagicMock()
+        node_type.name.return_value = "bind"
+
+        connectors, why = graph._connectors_for_type("Vop", node_type)
+
+        assert why is None
+        assert [o.get("named_by_parm") for o in connectors["outputs"]] == [
+            "parmname",
+            "parmname",
+        ]
+
+
+class TestBuildNetworkWiresFromAParmNamedOutput:
+    """`source_output: "orient"` from a bind with parmname=orient was refused.
+
+    Validation read the source's outputs off a probe at the defaults (`parm`,
+    `bound_parm`), so the live name failed the dry run and the card's name
+    rolled the build back: the bind could not be wired by name at all. A spec
+    another spec takes an output from by name is now probed with its parms,
+    as a spec that names one of its own inputs already was.
+    """
+
+    def _dry(self, monkeypatch, source_output):
+        parent = MagicMock()
+        parent.path.return_value = "/obj/geo1/av"
+        parent.children.return_value = []
+        parent.displayNode.return_value = None
+        parent.renderNode.return_value = None
+        parent.childTypeCategory.return_value.name.return_value = "Vop"
+        types = {}
+        for name in ("bind", "null"):
+            types[name] = MagicMock()
+            types[name].name.return_value = name
+            types[name].maxNumInputs.return_value = 1
+        defaults = {
+            "bind": _probe([], [], outputs=("parm", "bound_parm")),
+            "null": _probe(["input1"], ["Input 1"], outputs=()),
+        }
+        defaults["bind"].parms.return_value = _string_parms({"parmname": "parm"})
+        configured = _probe([], [], outputs=("orient", "bound_orient"))
+        # Each type's default probe first, then the bind with its parms set.
+        made = iter([defaults["bind"], defaults["null"], configured])
+        parent.createNode.side_effect = lambda *a, **k: next(made)
+        monkeypatch.setattr(graph, "_PARM_PROBE_CACHE", {})
+        monkeypatch.setattr(hou, "node", lambda path: parent if path == parent.path() else None)
+        monkeypatch.setattr(graph, "_resolve_node_type", lambda cat, name: types.get(name))
+        monkeypatch.setattr(graph, "_instance_patterns", lambda t: [])
+        monkeypatch.setattr(graph, "_apply_parm", lambda node, name, value: None)
+        return graph.build_network(
+            "/obj/geo1/av",
+            [
+                {"type": "bind", "name": "b1", "parms": {"parmname": "orient"}},
+                {
+                    "type": "null",
+                    "name": "n1",
+                    "inputs": [{"source": "b1", "source_output": source_output}],
+                },
+            ],
+            dry_run=True,
+        )
+
+    def test_the_name_the_parm_gives_validates(self, monkeypatch):
+        result = self._dry(monkeypatch, "orient")
+        assert result["valid"] is True, result
+
+    def test_the_default_s_name_is_refused_with_the_live_ones(self, monkeypatch):
+        result = self._dry(monkeypatch, "parm")
+        assert result["valid"] is False
+        assert "has no output named 'parm'" in result["errors"][0]
+        assert "orient" in result["errors"][0]

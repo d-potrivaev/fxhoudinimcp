@@ -402,3 +402,177 @@ class TestBuildNetworkTakesCodeInASnippetField:
         result = self._dry({"mode": "velocty"})
         assert result["valid"] is False
         assert "'velocty' is not a menu item" in result["errors"][0]
+
+
+def _typed_card(monkeypatch, context, type_name, templates, probe, definition=None, **kwargs):
+    """A card for *type_name* in *context*, its probes all answered by *probe*."""
+    root = MagicMock()
+    scratch = MagicMock()
+    root.createNode.return_value = scratch
+    scratch.createNode.return_value = probe
+    monkeypatch.setattr(hou, "node", lambda path: root)
+    resolved = MagicMock()
+    resolved.name.return_value = type_name
+    resolved.minNumInputs.return_value = 0
+    resolved.maxNumInputs.return_value = 1
+    resolved.maxNumOutputs.return_value = 1
+    resolved.parmTemplateGroup.return_value.entriesWithoutFolders.return_value = templates
+    resolved.parmTemplateGroup.return_value.entries.return_value = []
+    resolved.definition.return_value = definition
+    monkeypatch.setattr(hou, "nodeTypeCategories", lambda: {context: MagicMock()})
+    monkeypatch.setattr(graph, "_resolve_node_type", lambda category, name: resolved)
+    return graph.get_node_card(type_name, context, **kwargs), root, scratch
+
+
+def _definition(sections):
+    definition = MagicMock()
+    definition.sections.return_value = sections
+    return definition
+
+
+class TestTheCardListsParmsAddedOnCreate:
+    """rendergeometrysettings' card answered `parm_count: 0` for "Render Points As".
+
+    The type has 16 parm templates and a new node 180: the asset's OnCreated
+    script (loputils.addRendererParmFolders) adds the rest, and the card's
+    probe runs without creation scripts. A second probe, with them, is made
+    for a type that has an OnCreated section; what it adds is on the card
+    with `added_on_create`, counted in `parms_added_on_create`.
+    """
+
+    POINT_STYLE = "xn__primvarskarmaobjectpoint_style_zpbfg"
+
+    @pytest.fixture(autouse=True)
+    def _fresh(self, monkeypatch):
+        monkeypatch.setattr(graph, "_CONNECTOR_CACHE", {})
+        monkeypatch.setattr(graph, "_ON_CREATED_CACHE", {})
+        monkeypatch.setattr(graph, "_definition_stamp", lambda node_type: None)
+        monkeypatch.setattr(graph, "_container_for", lambda category: "lopnet")
+        monkeypatch.setattr(graph, "_help_text", lambda resolved, context: None)
+
+    def _probe(self):
+        probe = _probe([])
+        probe.parmTemplateGroup.return_value.entriesWithoutFolders.return_value = [
+            _template("primpattern"),
+            _template(self.POINT_STYLE, label="Render Points As"),
+        ]
+        return probe
+
+    def _card(self, monkeypatch, sections, **kwargs):
+        return _typed_card(
+            monkeypatch,
+            "Lop",
+            "rendergeometrysettings",
+            [_template("primpattern")],
+            self._probe(),
+            definition=_definition(sections),
+            **kwargs,
+        )
+
+    def test_the_parms_a_creation_script_adds_are_on_the_card(self, monkeypatch):
+        card, _, scratch = self._card(
+            monkeypatch, {"OnCreated": object()}, parm_filter="point_style"
+        )
+        (entry,) = card["parms"]
+        assert entry["name"] == self.POINT_STYLE
+        assert entry["label"] == "Render Points As"
+        assert entry["added_on_create"] is True
+        assert card["parm_count"] == 1
+        assert card["parms_added_on_create"] == 1
+        # The connector probe skips creation scripts; this one runs them.
+        scratch.createNode.assert_any_call("rendergeometrysettings")
+
+    def test_the_type_s_own_parms_are_not_flagged(self, monkeypatch):
+        card, _, _ = self._card(monkeypatch, {"OnCreated": object()})
+        flagged = {entry["name"]: "added_on_create" in entry for entry in card["parms"]}
+        assert flagged == {"primpattern": False, self.POINT_STYLE: True}
+
+    def test_a_type_without_oncreated_gets_no_second_probe(self, monkeypatch):
+        card, root, _ = self._card(monkeypatch, {"DialogScript": object()})
+        assert [entry["name"] for entry in card["parms"]] == ["primpattern"]
+        assert "parms_added_on_create" not in card
+        root.createNode.assert_called_once()  # the connector probe alone
+
+    def test_a_second_card_reads_them_from_the_cache(self, monkeypatch):
+        self._card(monkeypatch, {"OnCreated": object()})
+        card, root, _ = self._card(monkeypatch, {"OnCreated": object()})
+        root.createNode.assert_not_called()
+        assert card["parms_added_on_create"] == 1
+
+    def test_a_failed_probe_leaves_the_card_to_the_type(self, monkeypatch):
+        node_type = MagicMock()
+        node_type.definition.return_value = _definition({"OnCreated": object()})
+        root = MagicMock()
+        scratch = root.createNode.return_value
+        scratch.createNode.side_effect = RuntimeError("no license for this type")
+        monkeypatch.setattr(hou, "node", lambda path: root)
+        assert graph._on_created_templates("Lop", node_type) == []
+        scratch.destroy.assert_called_once()
+
+
+class TestTheCardListsEverySignatureOfAVop:
+    """A fresh setattrib's `signature` menu offers `default` alone.
+
+    The menu lists what the node can take as wired, so the tokens of the
+    other 19 signatures (`f`, `m3`, `v4`) had to be found by wiring probes
+    and reading inputDataTypes(). The type's DialogScript names them all;
+    the card lists them in `signatures` and as the `signature` menu.
+    """
+
+    DIALOG = """
+    signature\t"Float Attribute"\tf  { int string string string int int float }
+    signature\t"Vector Attribute"\tdefault { }
+    signature\t"Matrix3 Attribute"\tm3 { int string string string int int matrix3 }
+    """
+
+    @pytest.fixture(autouse=True)
+    def _fresh(self, monkeypatch):
+        monkeypatch.setattr(graph, "_CONNECTOR_CACHE", {})
+        monkeypatch.setattr(graph, "_ON_CREATED_CACHE", {})
+        monkeypatch.setattr(graph, "_definition_stamp", lambda node_type: None)
+        monkeypatch.setattr(graph, "_container_for", lambda category: "matnet")
+        monkeypatch.setattr(graph, "_help_text", lambda resolved, context: None)
+
+    def _dialog(self):
+        return _definition({"DialogScript": MagicMock(contents=lambda: self.DIALOG)})
+
+    def test_every_signature_is_read_with_its_token(self):
+        node_type = MagicMock()
+        node_type.definition.return_value = self._dialog()
+        found = graph._vop_signatures(node_type)
+        assert [s["name"] for s in found] == ["f", "default", "m3"]
+        assert found[0]["label"] == "Float Attribute"
+        assert found[0]["input_types"][-1] == "float"
+        assert "input_types" not in found[1]
+
+    def test_a_type_without_a_definition_has_none(self):
+        node_type = MagicMock()
+        node_type.definition.return_value = None
+        assert graph._vop_signatures(node_type) == []
+
+    def _signature_card(self, monkeypatch, context):
+        signature = _template("signature", items=("default",), labels=("Vector Attribute",))
+        card, _, _ = _typed_card(
+            monkeypatch, context, "setattrib", [signature], _probe([]), definition=self._dialog()
+        )
+        return card
+
+    def test_the_signature_menu_is_every_token(self, monkeypatch):
+        card = self._signature_card(monkeypatch, "Vop")
+        (entry,) = card["parms"]
+        assert entry["menu"] == ["f", "default", "m3"]
+        assert entry["menu_labels"] == [
+            "Float Attribute",
+            "Vector Attribute",
+            "Matrix3 Attribute",
+        ]
+        assert entry["menu_source"] == "signatures"
+        assert [s["name"] for s in card["signatures"]] == ["f", "default", "m3"]
+        assert "signatures_note" in card
+
+    def test_another_context_keeps_the_template_menu(self, monkeypatch):
+        card = self._signature_card(monkeypatch, "Sop")
+        (entry,) = card["parms"]
+        assert entry["menu"] == ["default"]
+        assert entry["menu_source"] == "template"
+        assert "signatures" not in card
