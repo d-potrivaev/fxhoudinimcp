@@ -279,6 +279,23 @@ class TestMergeKeepsSceneGlobals:
     def test_a_value_with_a_quote_is_quoted_for_hscript(self):
         assert scene._hscript_quoted("/work/job") == "'/work/job'"
         assert scene._hscript_quoted("it's") == '"it\'s"'
+        # Double quotes would expand these; a backslash is kept as written
+        # (round-tripped through set -g on 22.0.368).
+        assert scene._hscript_quoted("don't $HOME `x`") == r'"don' + "'" + r't \$HOME \`x\`"'
+        assert scene._hscript_quoted(r"C:\x's") == r'"C:\x' + "'" + 's"'
+
+    def test_a_merge_that_fails_still_puts_the_globals_back(self, monkeypatch, hip):
+        fake = _Scene([], FILE, scene_globals=self.SCENE, file_globals=self.FILE)
+        hip_file = _install(monkeypatch, fake)
+
+        def broken(*args, **kwargs):
+            fake.globals.update(fake.file_globals)
+            raise RuntimeError("Error loading")
+
+        hip_file.merge.side_effect = broken
+        with pytest.raises(RuntimeError):
+            scene.load_scene(hip, merge=True)
+        assert fake.globals["JOB"] == "/work/job"
 
 
 class TestLoad:

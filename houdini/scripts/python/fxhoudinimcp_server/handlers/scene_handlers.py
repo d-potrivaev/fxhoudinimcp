@@ -177,7 +177,10 @@ def _hscript_quoted(value: str) -> str:
     """Quote a value for `set -g` so hscript does not expand it."""
     if "'" not in value:
         return f"'{value}'"
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    # Double quotes expand $ and backticks; a backslash is kept as written.
+    for char in ('"', "$", "`"):
+        value = value.replace(char, "\\" + char)
+    return f'"{value}"'
 
 
 def _restore_globals(before: dict[str, str]) -> tuple[dict[str, dict], dict[str, str]]:
@@ -254,7 +257,9 @@ def _merge(file_path: str, node_paths: list | None, overwrite_on_conflict: bool)
         )
     except hou.LoadWarning as warning:
         warnings = _warning_lines(warning)
-    globals_restored, globals_added = _restore_globals(globals_before)
+    finally:
+        # A merge that fails halfway has already run the file's `set -g`.
+        globals_restored, globals_added = _restore_globals(globals_before)
     after = _children_of(watched)
     arrived = set()
     for network, paths in after.items():
