@@ -7,6 +7,7 @@ node parameters, expressions, channel references, and spare parameters.
 from __future__ import annotations
 
 import contextlib
+import os
 import re
 
 # Built-in
@@ -2055,13 +2056,25 @@ def _outgoing_reference(parm: hou.Parm) -> dict[str, Any] | None:
     return entry
 
 
+def _factory_type(node_type: hou.NodeType) -> bool:
+    """True for a compiled node type or an asset shipped under $HFS."""
+    definition = node_type.definition()
+    if definition is None:
+        return True
+    hfs = os.path.normcase(os.path.normpath(hou.text.expandString("$HFS")))
+    library = os.path.normcase(os.path.normpath(definition.libraryFilePath()))
+    return library.startswith(hfs + os.sep)
+
+
 def broken_references(parm: hou.Parm) -> list[str]:
     """Channel references in *parm* that point at a node or parameter that is not there.
 
     Houdini evaluates such a reference to 0 or "" and reports nothing: no error,
     no warning, and the node cooks clean. A terrain whose height reads a missing
     ../CTRL null goes flat while every check says healthy, so this looks. Paths
-    built at runtime ($OS) are skipped rather than guessed at.
+    built at runtime ($OS) are skipped rather than guessed at, and so is a parm
+    still at its factory default: that expression is the node type's, not the
+    caller's.
     """
     # Cheap gate first: this runs over every parm of every node in a verify,
     # and _outgoing_reference raises and swallows on each plain value.
@@ -2073,6 +2086,15 @@ def broken_references(parm: hou.Parm) -> list[str]:
             return []
     except Exception:
         return []
+    # A factory default is the node type's own, and Houdini evaluates it where
+    # it means something: popsteerseek's `state` reads ch("statemethod") off
+    # the crowd state, not the node. Twelve popsteer* nodes came back with an
+    # error the node does not have (node.errors() empty). Only SideFX's own
+    # defaults: a spare or a user asset's parm built with default_expression
+    # is also "at default", and its ch("../CTRL/h") is the caller's.
+    with contextlib.suppress(Exception):
+        if not parm.isSpare() and parm.isAtDefault() and _factory_type(parm.node().type()):
+            return []
     entry = _outgoing_reference(parm)
     return [
         f"{parm.name()}: reference '{token}' does not resolve, so it silently "
