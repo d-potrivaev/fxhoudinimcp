@@ -17,6 +17,11 @@ each with its default beside the value; with `inside` it needs no patterns.
 "What was changed on these 33 nodes of a POP network" was 33 get_node_info
 calls or an execute_python.
 
+value_contains keeps only the parameters whose raw text or expression holds a
+substring, case-insensitive; with `inside` it needs no patterns either.
+"Which parameters still name /obj/X", a deleted node included, was an
+allSubChildren() walk in execute_python.
+
 hou is mocked here and only through monkeypatch; the live check ran on
 Houdini 22.0.429 (six file SOPs, one call, six rows, `$JOB` visible raw).
 """
@@ -403,3 +408,83 @@ class TestOnlyWhatWasChanged:
             parameters._get_parameters(inside="/mat/lib")
         plain = parameters._get_parameters(inside="/mat/lib", patterns=["life"])
         assert "non_default_only" not in plain
+
+
+class TestValueContains:
+    """Which parameters of a scene still name a node, a deleted one included."""
+
+    @staticmethod
+    def _text(name, raw, expression=None):
+        parm = _parm(name, raw)
+        if expression is None:
+            parm.expression.side_effect = _OperationFailed("no expression")
+        else:
+            parm.expression.return_value = expression
+        return parm
+
+    def _scene(self, monkeypatch):
+        reader = _node(
+            "/obj/fx/read_gone",
+            "file",
+            [self._text("file", "$HIP/geo/`chs('/OBJ/gone_node/out')`.bgeo"), self._text("t", "0")],
+        )
+        follower = _node(
+            "/obj/fx/follow",
+            "xform",
+            [self._text("tx", "0", expression='ch("/obj/gone_node/tx")'), self._text("ty", "0")],
+        )
+        bystander = _node("/obj/fx/other", "null", [self._text("file", "/obj/kept_node")])
+        root = _node("/", "root", [])
+        root.allSubChildren.return_value = [reader, follower, bystander]
+        monkeypatch.setattr(parameters.hou, "node", lambda path: root if path == "/" else None)
+        return root
+
+    def test_a_scene_sweep_needs_no_patterns_and_reads_raw_text_and_expressions(self, monkeypatch):
+        self._scene(monkeypatch)
+        result = parameters._get_parameters(
+            inside="/", recursive=True, value_contains="/obj/gone_node"
+        )
+        assert [(r["node"], r["parm"]) for r in result["rows"]] == [
+            ("/obj/fx/read_gone", "file"),
+            ("/obj/fx/follow", "tx"),
+        ]
+        assert result["value_contains"] == "/obj/gone_node"
+        assert result["nodes_scanned"] == 3
+        assert result["nodes_matched"] == 2
+
+    def test_patterns_still_narrow_it(self, monkeypatch):
+        self._scene(monkeypatch)
+        result = parameters._get_parameters(
+            inside="/", recursive=True, patterns=["file"], value_contains="gone_node"
+        )
+        assert [(r["node"], r["parm"]) for r in result["rows"]] == [("/obj/fx/read_gone", "file")]
+
+    def test_nothing_that_holds_it_answers_no_rows(self, monkeypatch):
+        self._scene(monkeypatch)
+        result = parameters._get_parameters(
+            inside="/", recursive=True, value_contains="/obj/never_there"
+        )
+        assert result["rows"] == []
+        assert result["matched"] == 0
+
+    def test_a_single_node_is_filtered_too(self, monkeypatch):
+        node = _node(
+            "/obj/fx/follow",
+            "xform",
+            [self._text("tx", "0", 'ch("/obj/gone_node/tx")'), self._text("ty", "0")],
+        )
+        monkeypatch.setattr(parameters.hou, "node", lambda path: node)
+        result = parameters._get_parameters("/obj/fx/follow", value_contains="GONE_NODE")
+        assert list(result["parameters"]) == ["tx"]
+        assert result["value_contains"] == "GONE_NODE"
+
+    def test_an_empty_needle_is_refused(self, monkeypatch):
+        self._scene(monkeypatch)
+        with pytest.raises(ValueError, match="value_contains must not be empty"):
+            parameters._get_parameters(inside="/", value_contains="")
+
+    def test_without_it_the_reply_has_no_such_field(self, monkeypatch):
+        self._scene(monkeypatch)
+        result = parameters._get_parameters(inside="/", recursive=True, patterns=["file"])
+        assert "value_contains" not in result
+        assert len(result["rows"]) == 2

@@ -498,6 +498,7 @@ async def get_parameters(
     recursive: bool = False,
     node_type: str | None = None,
     include_locked_assets: bool = False,
+    value_contains: str | None = None,
     non_default_only: bool = False,
 ) -> dict:
     """Read many parameter values at once, matched by name or label substring.
@@ -517,7 +518,7 @@ async def get_parameters(
         node_path: Node to read.
         patterns: Substrings matched against parameter name and label. Omit for
             everything, up to the cap. Required with `inside`, unless
-            non_default_only.
+            non_default_only or value_contains.
         include_defaults: Also report whether each value is still the default,
             and, where it differs, the default (`default`, `default_expression`).
         inside: Network to read instead of a single node.
@@ -526,6 +527,11 @@ async def get_parameters(
             and counted in `skipped_inside_locked_assets`.
         node_type: With `inside`, only nodes of this type (e.g. "mtlximage").
         include_locked_assets: With `recursive`, read inside locked HDAs too.
+        value_contains: Only parameters whose raw text or expression holds
+            this substring (case-insensitive), e.g. inside="/",
+            recursive=True, value_contains="/obj/X": every parameter that
+            still names that node, a deleted one included. No patterns
+            needed.
         non_default_only: Only parameters changed from their defaults, each
             with its default: "what was changed on every node of this network"
             in one call (with `inside`, no patterns needed).
@@ -534,6 +540,8 @@ async def get_parameters(
     params: dict[str, Any] = {"include_defaults": include_defaults}
     if non_default_only:
         params["non_default_only"] = True
+    if value_contains is not None:
+        params["value_contains"] = value_contains
     if node_path is not None:
         params["node_path"] = node_path
     if patterns is not None:

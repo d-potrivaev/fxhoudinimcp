@@ -366,6 +366,22 @@ class TestEvidenceTools:
         )
 
     @pytest.mark.asyncio
+    async def test_get_parameters_by_value(self, mock_ctx, mock_bridge):
+        from fxhoudinimcp.tools.parameters import get_parameters
+
+        mock_bridge.execute.return_value = {"rows": []}
+        await get_parameters(mock_ctx, inside="/", recursive=True, value_contains="/obj/gone")
+        mock_bridge.execute.assert_called_once_with(
+            "parameters.get_parameters",
+            {
+                "include_defaults": False,
+                "value_contains": "/obj/gone",
+                "inside": "/",
+                "recursive": True,
+            },
+        )
+
+    @pytest.mark.asyncio
     async def test_verify_network_does_not_force_a_cook_by_default(self, mock_ctx, mock_bridge):
         from fxhoudinimcp.tools.graph import verify_network
 
