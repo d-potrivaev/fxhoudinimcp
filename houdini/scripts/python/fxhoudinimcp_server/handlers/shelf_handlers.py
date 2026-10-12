@@ -18,6 +18,7 @@ from __future__ import annotations
 # Built-in
 import contextlib
 import fnmatch
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -335,11 +336,14 @@ def _editor_in(network: hou.Node) -> Iterator[hou.Node | None]:
 
 
 @contextlib.contextmanager
-def _no_prompts(tool_name: str, selection: list | None = None):
+def _no_prompts(tool_name: str, selection: list | None = None, tool: Any = None):
     """Make every viewport selection and dialog raise instead of waiting.
 
     An object selection is the exception: it is answered with *selection*, or
     with the objects already selected, as Houdini does (_object_selection).
+    hou.shelves.runningTool() answers *tool* for the run, as it does for a
+    click: run from here it answered None, and dop_rbdpackedobject died in
+    doptoolutils on runningTool().name().
     """
 
     def refuse(name):
@@ -361,12 +365,62 @@ def _no_prompts(tool_name: str, selection: list | None = None):
                 stand_in = _object_selection(selection) if name == "selectObjects" else refuse(name)
                 with contextlib.suppress(Exception):
                     setattr(owner, name, stand_in)
+    shelves = getattr(hou, "shelves", None)
+    if tool is not None and shelves is not None and hasattr(shelves, "runningTool"):
+        patched.append((shelves, "runningTool", shelves.runningTool))
+        with contextlib.suppress(Exception):
+            shelves.runningTool = lambda: tool
     try:
         yield
     finally:
         for owner, name, original in patched:
             with contextlib.suppress(Exception):
                 setattr(owner, name, original)
+
+
+# The (toolutils module, node type) a tool script hands to genericTool, which
+# builds it: soptoolutils' 'material' is a SOP, shoptoolutils' a SHOP.
+_GENERIC_TOOL_RE = re.compile(r"(\w+)\.genericTool\(\s*kwargs\s*,\s*['\"]([^'\"]+)['\"]")
+
+
+def _prompt_free_alternatives(script: str, tools: dict, tool_name: str) -> dict[str, str]:
+    """Node type -> a shelf tool that builds it without asking, for each branch of *script*.
+
+    dynamics_rbdfracturedobject asks "RBD Packed Object or RBD Fractured
+    Object?" in a dialog and then calls genericTool(kwargs, 'rbdpackedobject')
+    or 'rbdfracturedobject' -- which is all dop_rbdpackedobject does, with no
+    dialog. Naming those turns a refusal into the next step.
+
+    Only the tools whose name holds the node type are read: a tool's script
+    loads on first access, and reading all 8091 took 23 s on 22.0.429 -- the
+    refusal waited for it. dop_rbdpackedobject holds rbdpackedobject.
+    """
+    wanted = set(_GENERIC_TOOL_RE.findall(script))
+    if not wanted:
+        return {}
+    found: dict[str, str] = {}
+    for name, other in sorted(tools.items()):
+        if name == tool_name or not any(node_type in name for _, node_type in wanted):
+            continue
+        try:
+            text = other.script() or ""
+        except Exception:
+            continue
+        for module, node_type in _GENERIC_TOOL_RE.findall(text):
+            if (
+                (module, node_type) in wanted
+                and node_type not in found
+                and not interactive_markers(text)
+            ):
+                found[node_type] = name
+    return found
+
+
+# Said when _remove_new leaves the scene alone.
+_KEPT_HALF_SETUP = (
+    " It had moved, collapsed or retyped existing nodes, so nothing it built was "
+    "removed: one undo takes the whole run back."
+)
 
 
 def _refusal(tool_name: str, why: str) -> ValueError:
@@ -398,6 +452,38 @@ def _new_by_path(tree: dict[int, hou.Node], before: dict[int, hou.Node]) -> dict
     return {node.path(): node for sid, node in tree.items() if sid not in before}
 
 
+def _remove_new(watched: list, before: dict[int, hou.Node]) -> list[str] | None:
+    """Destroy what a run created under *watched*, inside existing networks too.
+
+    Whatever a tool built before it asked for a click or failed is half a
+    setup: dop_rbdpackedobject, failing, left rest1 without an input and a DOP
+    object without an output. Returns the paths removed, or None, touching
+    nothing, when a node from before is gone: collapseIntoSubnet, moveNodesTo
+    and changeNodeType give the artist's own nodes new session ids, so they
+    would read as new and be destroyed with what the tool built (21.0.440).
+    """
+    tree = _tree(watched)
+    if any(sid not in tree for sid in before):
+        return None
+    made = _new_by_path(tree, before)
+    removed = []
+    for path in sorted(made):
+        if path.rsplit("/", 1)[0] in made:
+            continue  # goes with its parent
+        with contextlib.suppress(Exception):
+            made[path].destroy()
+            removed.append(path)
+    return removed
+
+
+def _restore_dop_network(target: hou.Node | None, before: str | None) -> None:
+    """Undo dop_network's switch when the run built nothing: it is the artist's."""
+    if target is None or before is None:
+        return
+    with contextlib.suppress(Exception):
+        hou.setCurrentDopNet(hou.node(before))
+
+
 def _is_sop_tool(tool: Any) -> bool:
     """Whether *tool* is in a SOP tab menu, so it builds in its pane's network.
 
@@ -426,6 +512,7 @@ def run_shelf_tool(
     kwargs: dict | None = None,
     parent_path: str | None = None,
     selection: list | None = None,
+    dop_network: str | None = None,
     **_: Any,
 ) -> dict[str, Any]:
     """Run a shelf tool, reporting what it created.
@@ -445,6 +532,9 @@ def run_shelf_tool(
         selection: Object paths the tool takes as its object selection, in
             place of the scene's (which is left alone). Without it a tool that
             asks for objects takes the ones already selected, as in Houdini.
+        dop_network: DOP network made current before the run, where DOP tools
+            build. model_popnet creates one without making it current, so the
+            next DOP tool built into the previous network.
     """
     tools = hou.shelves.tools()
     tool = tools.get(tool_name)
@@ -456,7 +546,12 @@ def run_shelf_tool(
         raise ValueError(f"Shelf tool '{tool_name}' has an empty script.")
     blocking = interactive_markers(script)
     if blocking:
-        raise _refusal(tool_name, ", ".join(blocking[:3]))
+        refusal = _refusal(tool_name, ", ".join(blocking[:3]))
+        if alternatives := _prompt_free_alternatives(script, tools, tool_name):
+            refusal = ValueError(
+                f"{refusal} Tools that build the same node types without asking: {alternatives}."
+            )
+        raise refusal
 
     # Watch every top-level network, not just one. largeOcean creates a geo and a
     # procedural in /obj AND a LOP in /stage, and watching only the given parent
@@ -481,6 +576,19 @@ def run_shelf_tool(
         missing = [str(path) for path, node in zip(selection, chosen, strict=True) if node is None]
         if missing:
             raise ValueError(f"selection: no such node(s): {missing}")
+    dop_target = None
+    if dop_network is not None:
+        dop_target = hou.node(str(dop_network))
+        if dop_target is None:
+            raise ValueError(f"dop_network not found: {dop_network}")
+        is_dop = False
+        with contextlib.suppress(Exception):
+            is_dop = dop_target.childTypeCategory() == hou.dopNodeTypeCategory()
+        if not is_dop:
+            raise ValueError(
+                f"dop_network {dop_target.path()} is a {dop_target.type().name()}, "
+                f"not a DOP network"
+            )
 
     call_kwargs = dict(_DEFAULT_KWARGS)
     call_kwargs["toolname"] = tool.name()
@@ -492,6 +600,9 @@ def run_shelf_tool(
     # POP network, and a reply listing new top-level nodes never named them.
     before = _tree(watched)
     dop_before = _current_dop_network()
+    if dop_target is not None:
+        # Stays current after the run, as when an artist picks it.
+        hou.setCurrentDopNet(dop_target)
     # A tool that asks for a click is retried once as a Ctrl+click, Houdini's
     # "place immediately": the Crowds Simulate tool then builds its whole
     # default setup (agents, source, DOP states) instead of asking for an
@@ -500,6 +611,7 @@ def run_shelf_tool(
     retry_as_ctrl_click = not any((kwargs or {}).get(key) for key in modifiers)
     ran_as_ctrl_click = False
     refused: InteractivePrompt | None = None
+    kept = ""
     placed_in = None
     try:
         with contextlib.ExitStack() as stack:
@@ -514,20 +626,18 @@ def run_shelf_tool(
             while True:
                 namespace: dict[str, Any] = {"kwargs": call_kwargs, "hou": hou}
                 try:
-                    with _no_prompts(tool_name, chosen):
+                    with _no_prompts(tool_name, chosen, tool):
                         exec(script, namespace)  # noqa: S102 - running SideFX's own tool script
                     break
                 except InteractivePrompt as exc:
                     # Whatever the tool created before asking is half a setup;
-                    # remove it, inside existing networks too.
-                    made = _new_by_path(_tree(watched), before)
-                    for path in sorted(made):
-                        if path.rsplit("/", 1)[0] in made:
-                            continue  # goes with its parent
-                        with contextlib.suppress(Exception):
-                            made[path].destroy()
+                    # remove it, inside existing networks too. A retry on a
+                    # scene that could not be put back would build on it.
+                    if _remove_new(watched, before) is None:
+                        kept = _KEPT_HALF_SETUP
                     if (
-                        isinstance(exc, UnusableSelection)
+                        kept
+                        or isinstance(exc, UnusableSelection)
                         or not retry_as_ctrl_click
                         or ran_as_ctrl_click
                     ):
@@ -535,24 +645,36 @@ def run_shelf_tool(
                         break
                     call_kwargs = {**call_kwargs, "ctrlclick": True}
                     ran_as_ctrl_click = True
-    except AttributeError as exc:
-        if "'hou' has no attribute 'ui'" in str(exc):
+    except Exception as exc:
+        # Whatever it built before failing is half a setup, as on a refusal.
+        # An AttributeError inside SideFX's script was re-raised bare, with
+        # the half setup left in the scene.
+        removed = _remove_new(watched, before)
+        _restore_dop_network(dop_target, dop_before)
+        if isinstance(exc, AttributeError) and "'hou' has no attribute 'ui'" in str(exc):
             raise hou.OperationFailed(
                 f"Shelf tool '{tool_name}' needs a graphical Houdini: it calls "
                 f"hou.ui, which does not exist in a headless session. Read its "
                 f"recipe with get_shelf_tool_script and build the network "
                 f"directly instead."
             ) from exc
-        raise
-    except Exception as exc:
+        if removed is None:
+            left = _KEPT_HALF_SETUP
+        elif removed:
+            left = f" The {len(removed)} node(s) it had built were removed: {removed[:_LIST_CAP]}."
+        else:
+            left = ""
+        message = str(exc)[:200].rstrip(".")
         raise hou.OperationFailed(
-            f"Shelf tool '{tool_name}' failed: {type(exc).__name__}: {str(exc)[:200]}"
+            f"Shelf tool '{tool_name}' failed: {type(exc).__name__}: {message}.{left}"
         ) from exc
 
-    if isinstance(refused, UnusableSelection):
-        raise ValueError(f"Shelf tool '{tool_name}': {refused}.") from refused
     if refused is not None:
-        raise _refusal(tool_name, f"{refused}()") from refused
+        _restore_dop_network(dop_target, dop_before)
+    if isinstance(refused, UnusableSelection):
+        raise ValueError(f"Shelf tool '{tool_name}': {refused}.{kept}") from refused
+    if refused is not None:
+        raise ValueError(f"{_refusal(tool_name, f'{refused}()')}{kept}") from refused
 
     tree = _tree(watched)
     after = _new_by_path(tree, before)
