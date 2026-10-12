@@ -60,7 +60,9 @@ class TestSetPlaybackRange:
         result = animation._set_playback_range(1, 1200)
         assert (result["start"], result["end"]) == (1.0, 1200.0)
         assert playbar.global_range == (1.0, 1200.0)
-        assert result["frame_range_widened"] == {"from": [1.0, 240.0], "to": [1.0, 1200.0]}
+        widened = result["frame_range_widened"]
+        assert (widened["from"], widened["to"]) == ([1.0, 240.0], [1.0, 1200.0])
+        assert "$FSTART" in widened["note"]
 
     def test_an_earlier_start_widens_it_downwards(self, playbar):
         result = animation._set_playback_range(-10, 100)
@@ -72,3 +74,20 @@ class TestSetPlaybackRange:
         assert (result["start"], result["end"]) == (10.0, 20.0)
         assert playbar.global_range == (1.0, 240.0)
         assert "frame_range_widened" not in result
+
+    def test_a_playbar_that_does_not_clamp_is_left_alone(self, playbar, monkeypatch):
+        # hython keeps 1-1200 as asked; widening there moved every default ROP range.
+        monkeypatch.setattr(
+            playbar, "setPlaybackRange", lambda s, e: setattr(playbar, "playback", (s, e))
+        )
+        result = animation._set_playback_range(1, 1200)
+        assert (result["start"], result["end"]) == (1, 1200)
+        assert playbar.global_range == (1.0, 240.0)
+        assert "frame_range_widened" not in result
+
+    @pytest.mark.parametrize("end", [float("inf"), float("nan")])
+    def test_a_frame_that_is_not_finite_is_refused(self, playbar, monkeypatch, end):
+        monkeypatch.setattr(hou, "OperationFailed", ValueError)
+        with pytest.raises(ValueError, match="finite"):
+            animation._set_playback_range(1, end)
+        assert playbar.global_range == (1.0, 240.0)

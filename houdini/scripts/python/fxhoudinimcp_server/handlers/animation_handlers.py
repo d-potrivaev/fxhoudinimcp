@@ -6,6 +6,9 @@ playbar control.
 
 from __future__ import annotations
 
+# Built-in
+import math
+
 # Third-party
 import hou
 
@@ -233,31 +236,41 @@ def _set_frame_range(start: float, end: float) -> dict:
 
 
 def _set_playback_range(start: float, end: float) -> dict:
-    """Set the playback range, widening the global range to hold it.
+    """Set the playback range, widening the global range when Houdini clamps it.
 
-    Houdini clamps a playback range to the global one without a word: 1-1200
-    asked of a 1-240 scene answered start 1, end 240, "playback_range_set".
-    The global range is widened first instead, and the reply names what it
-    was and what it is now.
+    A graphical Houdini clamps a playback range to the global one without a
+    word: 1-1200 asked of a 1-240 scene answered start 1, end 240,
+    "playback_range_set" (22.0.368). hython keeps 1-1200 as asked, so the
+    global range is widened only when the read-back shows the clamp. Widening
+    moves $FSTART/$FEND, and with them every ROP and File Cache left at its
+    default range; the reply names the global range before and after.
     """
+    if not (math.isfinite(start) and math.isfinite(end)):
+        raise hou.OperationFailed(f"start ({start}) and end ({end}) must be finite frames.")
     if start >= end:
         raise hou.OperationFailed(f"start ({start}) must be less than end ({end}).")
     global_start, global_end = hou.playbar.frameRange()
-    widened = start < global_start or end > global_end
-    if widened:
-        hou.playbar.setFrameRange(min(start, global_start), max(end, global_end))
     hou.playbar.setPlaybackRange(start, end)
-
     actual_start, actual_end = hou.playbar.playbackRange()
+    clamped = (start < global_start and actual_start > start) or (
+        end > global_end and actual_end < end
+    )
+    if clamped:
+        hou.playbar.setFrameRange(min(start, global_start), max(end, global_end))
+        hou.playbar.setPlaybackRange(start, end)
+        actual_start, actual_end = hou.playbar.playbackRange()
+
     result = {
         "start": actual_start,
         "end": actual_end,
         "status": "playback_range_set",
     }
-    if widened:
+    if clamped:
         result["frame_range_widened"] = {
             "from": [global_start, global_end],
             "to": list(hou.playbar.frameRange()),
+            "note": "$FSTART/$FEND moved with it: ROPs and caches at their default "
+            "range now cover the wider one.",
         }
     return result
 
