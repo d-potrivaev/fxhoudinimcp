@@ -63,6 +63,7 @@ async def run_shelf_tool(
     kwargs: dict[str, Any] | None = None,
     parent_path: str | None = None,
     selection: list[str] | None = None,
+    dop_network: str | None = None,
 ) -> dict:
     """Run a shelf tool and report the nodes it created.
 
@@ -77,6 +78,13 @@ async def run_shelf_tool(
     Nodes the tool added inside networks that already existed (a FLIP tool
     into the current POP network) are listed in `created_in_existing`;
     `current_dop_network` says where DOP tools put theirs, before and after.
+    A tool that creates a DOP network (model_popnet) does not make it the
+    current one, so the next DOP tool would build into the previous network:
+    pass that network as `dop_network`.
+
+    A tool whose script fails has what it built removed, and the error names
+    it. A dialog tool refused for its question names, when there is one, a
+    tool that builds the same branch without asking.
 
     Args:
         tool_name: Internal tool name, from list_shelf_tools.
@@ -88,6 +96,9 @@ async def run_shelf_tool(
             also where a SOP tool places its nodes (`placed_in`).
         selection: Object paths the tool takes as its object selection. The
             scene's selection is left as it was, whatever the tool selects.
+        dop_network: DOP network to make current before the run
+            (hou.setCurrentDopNet), where DOP tools build. It stays current
+            afterwards, as when an artist picks it.
     """
     bridge = _get_bridge(ctx)
     params: dict[str, Any] = {"tool_name": tool_name}
@@ -97,4 +108,6 @@ async def run_shelf_tool(
         params["parent_path"] = parent_path
     if selection is not None:
         params["selection"] = selection
+    if dop_network is not None:
+        params["dop_network"] = dop_network
     return await bridge.execute("shelf.run_shelf_tool", params)

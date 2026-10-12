@@ -661,3 +661,136 @@ def test_run_shelf_tool_puts_each_editor_s_current_node_back(monkeypatch):
 
     shelf_handlers.run_shelf_tool("the_tool", kwargs={"run": builds_and_makes_current})
     editor.setCurrentNode.assert_called_once_with(mine, pick_node=False)
+
+
+def test_running_tool_answers_the_tool_for_the_run(monkeypatch):
+    # doptoolutils calls hou.shelves.runningTool().name(), which is None
+    # outside a click: dop_rbdpackedobject died there on its first line.
+    shelf_handlers, _ = _shelf_scene(monkeypatch, {})
+    hou = shelf_handlers.hou
+    monkeypatch.setattr(hou.shelves, "runningTool", lambda: None)
+    seen = []
+
+    shelf_handlers.run_shelf_tool(
+        "the_tool", kwargs={"run": lambda kw: seen.append(hou.shelves.runningTool().name())}
+    )
+
+    assert seen == ["the_tool"]
+    assert hou.shelves.runningTool() is None  # put back after the run
+
+
+class _ScriptFailed(Exception):
+    """Stands in for hou.OperationFailed, which a MagicMock hou cannot raise."""
+
+
+def test_a_failing_tool_removes_what_it_built_and_names_it(monkeypatch):
+    nodes = {"/obj/sphere1": _FakeObject("/obj/sphere1")}
+    shelf_handlers, _ = _shelf_scene(monkeypatch, nodes)
+    monkeypatch.setattr(shelf_handlers.hou, "OperationFailed", _ScriptFailed)
+
+    def half_built(_kwargs):
+        for path in ("/obj/sphere1/rest1", "/obj/dopnet1", "/obj/dopnet1/merge1"):
+            nodes[path] = _FakeObject(path, "null")
+        raise AttributeError("'NoneType' object has no attribute 'name'")
+
+    with pytest.raises(_ScriptFailed, match=r"no attribute 'name'.*2 node\(s\).*/obj/dopnet1"):
+        shelf_handlers.run_shelf_tool("the_tool", kwargs={"run": half_built})
+
+    nodes["/obj/sphere1/rest1"].destroy.assert_called_once()
+    nodes["/obj/dopnet1"].destroy.assert_called_once()
+    nodes["/obj/dopnet1/merge1"].destroy.assert_not_called()  # goes with its parent
+    nodes["/obj/sphere1"].destroy.assert_not_called()
+
+
+def test_a_dialog_tool_refusal_names_the_tool_that_asks_nothing(monkeypatch):
+    from fxhoudinimcp_server.handlers import shelf_handlers
+
+    def tool(script):
+        made = MagicMock()
+        made.script.return_value = script
+        return made
+
+    asks = (
+        "choice = hou.ui.displayMessage('Packed or fractured?', buttons=('Packed', 'Fractured'))\n"
+        "if choice == 0:\n"
+        "    doptoolutils.genericTool(kwargs, 'rbdpackedobject')\n"
+        "else:\n"
+        "    doptoolutils.genericTool(kwargs, 'rbdfracturedobject')\n"
+    )
+    tools = {
+        "dynamics_rbdfracturedobject": tool(asks),
+        "dop_rbdpackedobject": tool("doptoolutils.genericTool(kwargs, 'rbdpackedobject')"),
+        "dop_rbdfracturedobject_asks": tool(
+            "hou.ui.displayMessage('?')\ndoptoolutils.genericTool(kwargs, 'rbdfracturedobject')"
+        ),
+        # Its name holds neither type, so its script is never loaded: reading
+        # every tool's script took 23 s on 8091 tools.
+        "sop_box": tool("soptoolutils.genericTool(kwargs, 'rbdpackedobject')"),
+    }
+    monkeypatch.setattr(shelf_handlers.hou.shelves, "tools", lambda: tools)
+
+    with pytest.raises(ValueError, match="displayMessage") as raised:
+        shelf_handlers.run_shelf_tool("dynamics_rbdfracturedobject")
+
+    message = str(raised.value)
+    assert "{'rbdpackedobject': 'dop_rbdpackedobject'}" in message
+    assert "dop_rbdfracturedobject_asks" not in message  # a tool that asks too is no way round
+    tools["sop_box"].script.assert_not_called()
+
+
+def _dop_scene(monkeypatch):
+    dop_a, dop_b = _FakeObject("/obj/dopA", "dopnet"), _FakeObject("/obj/dopB", "dopnet")
+    geo = _FakeObject("/obj/geo1", "geo")
+    for node, category in ((dop_a, "Dop"), (dop_b, "Dop"), (geo, "Sop")):
+        node.childTypeCategory = lambda c=category: c
+    nodes = {n.path(): n for n in (dop_a, dop_b, geo)}
+    shelf_handlers, _ = _shelf_scene(monkeypatch, nodes)
+    hou = shelf_handlers.hou
+    current = {"net": dop_a}
+    monkeypatch.setattr(hou, "dopNodeTypeCategory", lambda: "Dop")
+    monkeypatch.setattr(hou, "currentDopNet", lambda: current["net"])
+    monkeypatch.setattr(hou, "setCurrentDopNet", lambda net: current.update(net=net))
+    return shelf_handlers, nodes, current
+
+
+def test_dop_network_is_made_current_before_the_run_and_stays(monkeypatch):
+    shelf_handlers, nodes, current = _dop_scene(monkeypatch)
+    seen = []
+
+    reply = shelf_handlers.run_shelf_tool(
+        "the_tool",
+        kwargs={"run": lambda kw: seen.append(current["net"].path())},
+        dop_network="/obj/dopB",
+    )
+
+    assert seen == ["/obj/dopB"]
+    assert reply["current_dop_network"] == {"before": "/obj/dopA", "after": "/obj/dopB"}
+
+
+def test_a_dop_network_that_is_not_one_is_refused_before_the_run(monkeypatch):
+    shelf_handlers, nodes, current = _dop_scene(monkeypatch)
+    runs = []
+
+    with pytest.raises(ValueError, match="/obj/geo1 is a geo, not a DOP network"):
+        shelf_handlers.run_shelf_tool(
+            "the_tool", kwargs={"run": runs.append}, dop_network="/obj/geo1"
+        )
+    with pytest.raises(ValueError, match="dop_network not found"):
+        shelf_handlers.run_shelf_tool("the_tool", kwargs={"run": runs.append}, dop_network="/obj/x")
+
+    assert runs == []
+    assert current["net"] is nodes["/obj/dopA"]
+
+
+@pytest.mark.asyncio
+async def test_run_shelf_tool_passes_the_dop_network_to_houdini():
+    from fxhoudinimcp.tools import shelf
+
+    ctx = MagicMock()
+    bridge = MagicMock()
+    bridge.execute = AsyncMock(return_value={})
+    ctx.request_context.lifespan_context = {"bridge": bridge}
+    await shelf.run_shelf_tool(ctx, "dop_rbdpackedobject", dop_network="/obj/dopB")
+    bridge.execute.assert_awaited_once_with(
+        "shelf.run_shelf_tool", {"tool_name": "dop_rbdpackedobject", "dop_network": "/obj/dopB"}
+    )
