@@ -1788,6 +1788,7 @@ def _get_parameters(
     node_type: str | None = None,
     include_locked_assets: bool = False,
     non_default_only: bool = False,
+    value_contains: str | None = None,
     **_: Any,
 ) -> dict[str, Any]:
     """Current values for every parameter matching any of several patterns.
@@ -1806,7 +1807,7 @@ def _get_parameters(
         node_path: Node to read.
         patterns: Substrings matched against parameter name and label. Omit for
             every non-hidden parameter, up to the cap. Required with *inside*,
-            unless *non_default_only*.
+            unless *non_default_only* or *value_contains*.
         include_defaults: Also report whether each value is still the default,
             and, where it differs, the default itself (`default`, and
             `default_expression` when the template has one).
@@ -1821,6 +1822,14 @@ def _get_parameters(
             with its default beside the value. With *inside* no patterns are
             needed then: "what was changed on these 33 nodes" was 33
             get_node_info calls or execute_python.
+        value_contains: Only parameters whose raw text or expression holds
+            this substring (case-insensitive). With *inside* no patterns are
+            needed: "which parameters still name /obj/X" across a scene, a
+            deleted node included, was an allSubChildren() walk in
+            execute_python; get_parm_references reads one node, and sees no
+            reference to a node that no longer exists. Text, not resolved
+            paths: a relative "../X" does not hold "/obj/X", so search the
+            node's name to catch those too.
     """
     if non_default_only:
         include_defaults = True
@@ -1835,9 +1844,11 @@ def _get_parameters(
             node_type,
             include_locked_assets,
             non_default_only,
+            value_contains,
         )
     if node_path is None:
         raise ValueError("node_path is required (or inside, to read a whole network).")
+    needle = _needle(value_contains)
     node = hou.node(node_path)
     if node is None:
         raise hou.OperationFailed(f"Node not found: {node_path}")
@@ -1850,13 +1861,15 @@ def _get_parameters(
     matched = 0
     for parm in node.parms():
         # A folder stores its open tab: a switched tab read as "changed".
-        if non_default_only and _valueless(parm):
+        if (non_default_only or needle is not None) and _valueless(parm):
             continue
         if not _matches_patterns(parm, lowered):
             continue
         if non_default_only and _ramp_key_folded(parm, lowered):
             continue
         if non_default_only and not _off_default(parm):
+            continue
+        if needle is not None and not _holds_text(parm, needle):
             continue
         matched += 1
         if len(values) >= _GET_PARMS_CAP:
@@ -1867,11 +1880,39 @@ def _get_parameters(
         "node_path": node_path,
         "node_type": node.type().name(),
         "patterns": patterns,
+        **({"value_contains": value_contains} if needle is not None else {}),
         "matched": matched,
         "returned": len(values),
         "truncated": matched > len(values),
         "parameters": values,
     }
+
+
+def _needle(value_contains: Any) -> str | None:
+    """The lowered substring value_contains asks for, or None."""
+    if value_contains is None:
+        return None
+    text = str(value_contains)
+    if not text:
+        raise ValueError("value_contains must not be empty.")
+    return text.lower()
+
+
+def _holds_text(parm: hou.Parm, needle: str) -> bool:
+    """Whether *parm*'s raw text or expression contains *needle* (lowered).
+
+    Raw, not evaluated: a reference to a node that no longer exists is still
+    there as text ("/obj/X" in a string, `chs("/obj/X/file")`), which is what
+    a rename or delete audit is after; evaluating every parameter of a scene
+    would also cook it. Every keyframe's expression is read: rawValue() holds
+    only the one at the current frame.
+    """
+    texts: list[str] = []
+    with contextlib.suppress(Exception):
+        texts.append(str(parm.rawValue()))
+    with contextlib.suppress(Exception):
+        texts.extend(key.expression() for key in parm.keyframes() if key.isExpressionSet())
+    return any(needle in text.lower() for text in texts if text)
 
 
 def _sweep_parameters(
@@ -1882,6 +1923,7 @@ def _sweep_parameters(
     node_type: str | None,
     include_locked_assets: bool = False,
     non_default_only: bool = False,
+    value_contains: str | None = None,
 ) -> dict[str, Any]:
     """get_parameters over the nodes of a network, as one table of rows."""
     from fxhoudinimcp_server.handlers.node_handlers import _VALUELESS_PARM_TYPES
@@ -1891,11 +1933,12 @@ def _sweep_parameters(
         raise hou.OperationFailed(f"Node not found: {inside}")
     if isinstance(patterns, str):
         patterns = [patterns]
-    if not patterns and not non_default_only:
+    needle = _needle(value_contains)
+    if not patterns and not non_default_only and needle is None:
         raise ValueError(
             "patterns is required with inside: every parameter of a whole network "
             "is not an answer anyone can read. Name what to look for, e.g. ['file'], "
-            "or ask for non_default_only=True."
+            "or ask for non_default_only=True or value_contains."
         )
     lowered = [p.lower() for p in patterns] if patterns else None
     # A locked asset's instance stays (its interface is the user's); what is
@@ -1947,6 +1990,8 @@ def _sweep_parameters(
                 continue
             if non_default_only and not _off_default(parm):
                 continue
+            if needle is not None and not _holds_text(parm, needle):
+                continue
             matched += 1
             hit = True
             if len(rows) >= _SWEEP_ROW_CAP:
@@ -1961,6 +2006,7 @@ def _sweep_parameters(
         "node_type": node_type,
         "patterns": patterns,
         **({"non_default_only": True} if non_default_only else {}),
+        **({"value_contains": value_contains} if needle is not None else {}),
         "nodes_scanned": scanned,
         "nodes_matched": nodes_matched,
         "matched": matched,
