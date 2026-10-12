@@ -432,6 +432,10 @@ _PLACEMENT_EXEMPT = {
     # ... or an Attribute VOP inside it, when a VOP type will not build in a
     # material network.
     ("_connectors_for_type", "parent"),
+    # The card's second probe, with creation scripts, for the parms a type's
+    # OnCreated script adds: same throwaway container, same call.
+    ("_on_created_templates", "root"),
+    ("_on_created_templates", "scratch"),
     # build_network's probe of a spec with its parms applied, in the build's
     # own parent, destroyed in the same call like _parm_names_for_type's.
     ("_probe_connectors", "scratch"),
