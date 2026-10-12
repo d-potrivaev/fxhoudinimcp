@@ -625,6 +625,29 @@ def _string_parms(values):
     return parms
 
 
+def _renaming(probe, values, renames, outputs):
+    """*probe* with string parms *values*; those in *renames* rename *outputs*.
+
+    Setting a renaming parm swaps its value inside every output name, as a
+    Bind VOP's parmname does; the others leave the names alone.
+    """
+    state = dict(values)
+    parms = _string_parms(values)
+    for parm in parms:
+        name = parm.name.return_value
+        parm.set.side_effect = lambda value, name=name: state.__setitem__(name, value)
+    probe.parms.return_value = parms
+
+    def names():
+        result = list(outputs)
+        for name in renames:
+            result = [o.replace(values[name], state[name]) for o in result]
+        return result
+
+    probe.outputNames.side_effect = names
+    return probe
+
+
 class TestOutputsNamedAfterAParm:
     """A Bind VOP's outputs are named after its `parmname`.
 
@@ -634,12 +657,19 @@ class TestOutputsNamedAfterAParm:
     """
 
     def test_bind_outputs_are_marked_with_parmname(self):
-        probe = MagicMock()
-        probe.parms.return_value = _string_parms({"parmname": "parm"})
-        connectors = {"outputs": [{"name": "parm"}, {"name": "bound_parm"}, {"name": "other"}]}
+        outputs = ("parm", "bound_parm", "other")
+        probe = _renaming(MagicMock(), {"parmname": "parm"}, {"parmname"}, outputs)
+        connectors = {"outputs": [{"name": name} for name in outputs]}
         graph._mark_parm_named_outputs(probe, connectors)
         named = [entry.get("named_by_parm") for entry in connectors["outputs"]]
         assert named == ["parmname", "parmname", None]
+
+    def test_a_name_that_only_matches_a_value_is_not_marked(self):
+        # aanoise: output `noise`, noisetype=noise, a menu that renames nothing.
+        probe = _renaming(MagicMock(), {"noisetype": "noise"}, set(), ("noise",))
+        connectors = {"outputs": [{"name": "noise"}]}
+        graph._mark_parm_named_outputs(probe, connectors)
+        assert "named_by_parm" not in connectors["outputs"][0]
 
     def test_only_string_parms_name_an_output(self):
         probe = MagicMock()
@@ -653,7 +683,7 @@ class TestOutputsNamedAfterAParm:
         monkeypatch.setattr(graph, "_definition_stamp", lambda node_type: None)
         monkeypatch.setattr(graph, "_container_for", lambda category: "matnet")
         probe = _probe([], [], outputs=("parm", "bound_parm"))
-        probe.parms.return_value = _string_parms({"parmname": "parm"})
+        _renaming(probe, {"parmname": "parm"}, {"parmname"}, ("parm", "bound_parm"))
         root = MagicMock()
         root.createNode.return_value.createNode.return_value = probe
         monkeypatch.setattr(hou, "node", lambda path: root)

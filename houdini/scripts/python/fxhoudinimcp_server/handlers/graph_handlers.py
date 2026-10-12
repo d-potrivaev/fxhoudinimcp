@@ -488,25 +488,37 @@ def _mark_parm_named_outputs(probe: hou.Node, connectors: dict) -> None:
     `orient` has `orient` and `bound_orient`, and a build wired by the
     card's name was rolled back. Such an output carries `named_by_parm`, so
     its name reads as "the value of that parm", not as a fixed name.
+
+    Checked, not guessed: each string parm whose value shows in an output
+    name is set to a sentinel on the throwaway probe, and only the outputs
+    whose names then change are flagged. A name match alone flagged
+    aanoise's `noise` (noisetype is a menu), global's `P` and methodsubnet's
+    `method`, which no parm renames, and missed rampparm's
+    `ramp_the_basis_strings` (21.0.440).
     """
     outputs = connectors.get("outputs") or []
-    if not outputs:
+    names = [entry.get("name") or "" for entry in outputs]
+    if not names:
         return
-    values: dict[str, str] = {}
-    with contextlib.suppress(Exception):
-        for parm in probe.parms():
-            with contextlib.suppress(Exception):
-                if parm.parmTemplate().type() != hou.parmTemplateType.String:
-                    continue
-                value = parm.evalAsString()
-                if value and value.isidentifier():
-                    values.setdefault(value, parm.name())
-    for entry in outputs:
-        name = entry.get("name") or ""
-        for value, parm_name in values.items():
-            if name == value or name.endswith("_" + value):
-                entry["named_by_parm"] = parm_name
-                break
+    for parm in probe.parms():
+        with contextlib.suppress(Exception):
+            if parm.parmTemplate().type() != hou.parmTemplateType.String:
+                continue
+            value = parm.evalAsString()
+            if not value or not value.isidentifier() or not any(value in n for n in names):
+                continue
+            parm.set(_RENAME_SENTINEL)
+            try:
+                renamed = list(probe.outputNames())
+            finally:
+                parm.set(value)
+            # A parm that also adds or drops an output is read up to the shorter list.
+            for entry, before, after in zip(outputs, names, renamed, strict=False):
+                if before != after and "named_by_parm" not in entry:
+                    entry["named_by_parm"] = parm.name()
+
+
+_RENAME_SENTINEL = "fxhoudinimcp_probe"
 
 
 # Parm templates a type's OnCreated script adds, per type for the session.
