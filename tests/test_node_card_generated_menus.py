@@ -113,6 +113,23 @@ class TestGeneratedMenusOfAProbe:
         probe = _probe([_parm("loadtype", generator=GENERATOR)])
         assert graph._generated_menus_of(probe) == {"loadtype": {"generator": GENERATOR}}
 
+    def test_a_menu_script_that_fails_on_the_probe_is_named(self, monkeypatch):
+        # Run by menus.py, not menuItems(): a Python one that raises opened a
+        # modal window in a GUI session. On the unwired probe it is named.
+        def fails(parm):
+            raise graph.MenuScriptError(
+                "Menu script of /obj/n/attrib raised IndexError: tuple index out of range\n  tail"
+            )
+
+        monkeypatch.setattr(graph, "items_and_labels", fails)
+        probe = _probe([_parm("attrib", generator="return kwargs['node'].inputs()[0]")])
+        assert graph._generated_menus_of(probe) == {
+            "attrib": {
+                "generator": "return kwargs['node'].inputs()[0]",
+                "script_error": "Menu script of /obj/n/attrib raised IndexError: tuple index out of range",
+            }
+        }
+
     def test_one_failing_parm_does_not_lose_the_others(self):
         broken = _parm("broken", generator="x")
         broken.menuItems.side_effect = RuntimeError("script error")
@@ -188,6 +205,19 @@ class TestTheCardReadsGeneratedMenus:
         (entry,) = card["parms"]
         assert "menu" not in entry
         assert entry["menu_generator"] == GENERATOR
+        assert "menu_generator" in entry["note"]
+
+    def test_a_menu_script_that_failed_on_the_probe_is_named_on_the_card(self, monkeypatch):
+        def fails(parm):
+            raise graph.MenuScriptError(
+                "Menu script of /obj/n/loadtype raised IndexError: x\n  tail"
+            )
+
+        monkeypatch.setattr(graph, "items_and_labels", fails)
+        probe = _probe([_parm("loadtype", generator=GENERATOR)])
+        card, _ = self._card(monkeypatch, [_template("loadtype")], probe)
+        (entry,) = card["parms"]
+        assert entry["menu_script_error"] == "Menu script of /obj/n/loadtype raised IndexError: x"
         assert "menu_generator" in entry["note"]
 
     def test_a_second_card_reads_the_menus_from_the_cache(self, monkeypatch):

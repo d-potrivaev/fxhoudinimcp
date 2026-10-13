@@ -58,6 +58,8 @@ from fxhoudinimcp_server.handlers.parameter_handlers import (
     suggest_parms,
     template_labels,
 )
+from fxhoudinimcp_server.menus import MenuScriptError, items_and_labels
+from fxhoudinimcp_server.menus import items as menu_items
 from fxhoudinimcp_server.outputs import license_error
 
 ###### Helpers
@@ -218,11 +220,11 @@ def _instance_menu_errors(scratch: hou.Node, node_type, parms: dict, patterns: l
                 if parm is None or not _is_strict_menu(parm.parmTemplate()):
                     continue
                 with contextlib.suppress(Exception):
-                    items = list(parm.menuItems())
+                    items, item_labels = items_and_labels(parm)
                     if problem := _menu_error(name, value, items):
                         # These tokens are often bare numbers ('0'..'5'); the
                         # labels are what says which one means "Integer".
-                        labels = dict(zip(items, parm.menuLabels(), strict=False))
+                        labels = dict(zip(items, item_labels, strict=False))
                         problems.append(f"{problem} Labels: {labels}")
         finally:
             with contextlib.suppress(Exception):
@@ -369,11 +371,16 @@ def _generated_menus_of(node: hou.Node) -> dict[str, dict[str, Any]]:
                 if not script:
                     continue
                 entry: dict[str, Any] = {"generator": script}
-                items = list(parm.menuItems())
+                try:
+                    items, labels = items_and_labels(parm)
+                except MenuScriptError as exc:
+                    # Read on the card's unwired probe: a script that needs
+                    # an input fails here and lists its items on a wired node.
+                    items, labels = [], []
+                    entry["script_error"] = str(exc).splitlines()[0]
                 if items:
                     entry["items"] = items
-                    with contextlib.suppress(Exception):
-                        entry["labels"] = list(parm.menuLabels())
+                    entry["labels"] = labels
                 generated[parm.name()] = entry
     return generated
 
@@ -694,8 +701,14 @@ def _parm_names_for_type(
             continue
         with contextlib.suppress(Exception):
             template = parm.parmTemplate()
-            items = list(parm.menuItems())
-            if items and _is_strict_menu(template):
+            # Only strict menus are checked, so only theirs are read: reading
+            # a menu runs its script, and a Python one that fails on the
+            # unwired probe (characterblendshapes' group) opened Houdini's
+            # modal error window and held every next command.
+            if not _is_strict_menu(template):
+                continue
+            items = menu_items(parm)
+            if items:
                 menus[parm.name()] = items
                 scene_menus = scene_menus or bool(template.itemGeneratorScript())
     probe.destroy()
@@ -1759,7 +1772,7 @@ def build_network(
                 except Exception as exc:
                     items = []
                     with contextlib.suppress(Exception):
-                        items = list(node.parm(parm_name).menuItems())
+                        items = menu_items(node.parm(parm_name))
                     shown = f" Menu items: {items[:20]}" if items else ""
                     raise RuntimeError(
                         f"{node.path()} parm '{parm_name}': {readable_message(exc)}.{shown}"
@@ -2220,6 +2233,10 @@ def get_node_card(
                     "menu_generator and could not be read off a probe instance; "
                     "the menu is not empty on a real node."
                 )
+                if generated.get("script_error"):
+                    # Run on the unwired probe it raised: read the menu off a
+                    # wired node instead.
+                    entry["menu_script_error"] = generated["script_error"]
         if items:
             entry["menu"] = items[:_MENU_CAP]
             entry["menu_source"] = menu_source
