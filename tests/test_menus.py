@@ -112,11 +112,23 @@ class TestMenuScripts:
             ('["", "None", "a", "A"]', (["", "a"], ["None", "A"])),  # a label: kept
             ('["a", "A", "b"]', ([], [])),  # odd length: no menu at all
             ("[1, 2]", (["1"], ["2"])),
-            ("None", ([], [])),
         ],
     )
     def test_the_result_is_read_as_houdini_reads_it(self, menu_env, result, expected):
         assert menus.items_and_labels(_menu_parm(result)) == expected
+
+    @pytest.mark.parametrize(
+        "script",
+        ["None", "5", '  ["a", "A"]', 'r = ["a", "A"]'],
+        ids=["none", "int", "indented-expression", "body-without-return"],
+    )
+    def test_what_houdini_refuses_is_a_menu_script_error(self, menu_env, script):
+        """Each opens Houdini's window (22.0.368); not an empty menu, and not a TypeError."""
+        before = object()
+        menu_env["node"] = before
+        with pytest.raises(menus.MenuScriptError):
+            menus.items(_menu_parm(script))
+        assert menu_env["node"] is before
 
     def test_hscript_static_and_button_menus_are_left_to_houdini(self, menu_env):
         for parm in (

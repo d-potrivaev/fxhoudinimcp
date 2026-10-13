@@ -102,6 +102,12 @@ def run_python_menu(parm: hou.Parm, script: str) -> list[str]:
             result = namespace["__fxh_menu__"]()
         else:
             result = eval(code, namespace)  # noqa: S307 -- the node's own menu script
+        # Houdini answers these with its error window (measured on 22.0.368):
+        # None, so a body that never returns or an indented expression
+        # wrapped into one, and anything not iterable, such as an int.
+        if result is None:
+            raise TypeError("Python menu scripts must return a sequence of strings")
+        flat = [str(entry) for entry in result]
     except Exception as exc:
         frames = traceback.format_tb(exc.__traceback__.tb_next)[-3:]
         tail = "".join(frames).rstrip()
@@ -111,7 +117,7 @@ def run_python_menu(parm: hou.Parm, script: str) -> list[str]:
     finally:
         with contextlib.suppress(Exception):
             hou.setPwd(previous)
-    return [str(entry) for entry in (result or ())]
+    return flat
 
 
 def _python_generator(parm: hou.Parm) -> str:
