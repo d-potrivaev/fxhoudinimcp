@@ -297,6 +297,10 @@ async def set_current_network(
     every other object (the viewport's Y hotkey, no display flag touched), so
     the work is seen on its own and the rest of the scene does not cook.
 
+    A DOP network becomes the current one, where DOP shelf tools build (the
+    reply names `current_dop_network`), as entering it in Houdini does; with
+    other_objects=None that is all it changes besides the editor.
+
     Args:
         network_path: Network path to navigate to.
         other_objects: "hide" (default), "ghost", "show", or null to leave

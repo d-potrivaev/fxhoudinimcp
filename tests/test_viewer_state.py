@@ -17,6 +17,7 @@ from __future__ import annotations
 
 # Built-in
 import ast
+import contextlib
 import os
 import sys
 from pathlib import Path
@@ -450,3 +451,58 @@ class TestCapturesDrawNoSelection:
         assert found, "no flipbook call found -- the guard lost its target"
         bare = [(name, line) for name, line, inside in found if not inside]
         assert bare == [], f"flipbook() outside ui.selection_hidden(): {bare}"
+
+
+class TestCurrentDopNetwork:
+    """set_current_network on a DOP network makes it the current one.
+
+    Houdini does so when the editor enters a DOP network (measured on
+    22.0.429), but neither the reply nor the docstring said it, and a session
+    set it through execute_python after model_popnet, which does not.
+    """
+
+    @pytest.fixture
+    def editor(self, monkeypatch):
+        dop = object()
+        node = MagicMock()
+        current = {"net": None}
+        pane = MagicMock()
+        pane.type.return_value = "NetworkEditor"
+        monkeypatch.setattr(viewport, "require_ui", lambda *a, **k: None)
+        monkeypatch.setattr(viewport, "keep_viewer_state", contextlib.nullcontext)
+        monkeypatch.setattr(viewport, "set_other_objects", lambda mode: mode)
+        monkeypatch.setattr(viewport.hou, "node", lambda path: node, raising=False)
+        monkeypatch.setattr(
+            viewport.hou,
+            "paneTabType",
+            SimpleNamespace(NetworkEditor="NetworkEditor"),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            viewport.hou, "ui", SimpleNamespace(paneTabs=lambda: [pane]), raising=False
+        )
+        monkeypatch.setattr(viewport.hou, "dopNodeTypeCategory", lambda: dop, raising=False)
+        monkeypatch.setattr(
+            viewport.hou, "setCurrentDopNet", lambda n: current.update(net=n), raising=False
+        )
+        monkeypatch.setattr(
+            viewport.hou,
+            "currentDopNet",
+            lambda: SimpleNamespace(path=lambda: "/obj/project/popnet"),
+            raising=False,
+        )
+        return node, dop, current
+
+    def test_a_dop_network_is_made_current_and_named(self, editor):
+        node, dop, current = editor
+        node.childTypeCategory.return_value = dop
+        reply = viewport.set_current_network("/obj/project/popnet", other_objects=None)
+        assert current["net"] is node
+        assert reply["current_dop_network"] == "/obj/project/popnet"
+
+    def test_any_other_network_leaves_it(self, editor):
+        node, _, current = editor
+        node.childTypeCategory.return_value = object()
+        reply = viewport.set_current_network("/obj/geo1", other_objects=None)
+        assert current["net"] is None
+        assert "current_dop_network" not in reply
