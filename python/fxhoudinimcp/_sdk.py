@@ -24,10 +24,51 @@ try:
     # mcp >= 2.0
     from mcp.server.mcpserver import Context as Context
     from mcp.server.mcpserver import MCPServer as Server
+
+    _SDK_V2 = True
 except ImportError:  # pragma: no cover - depends on the installed mcp
     # mcp 1.x
     from mcp.server.fastmcp import Context as Context
     from mcp.server.fastmcp import FastMCP as Server
+
+    _SDK_V2 = False
+
+
+def run_server(server, *, transport: str) -> None:
+    """Run the server; on SDK 2, HTTP without protocol sessions.
+
+    Stateless, a client keeps no Mcp-Session-Id between requests (2026-07-28
+    clients never had one: SDK 2 serves them statelessly either way). SDK 2
+    enters the lifespan once per session manager, so the Houdini bridge
+    lives as long as the process. SDK 1 enters it once per stateless
+    request: a new bridge and port scan for every call, and connect_houdini
+    forgotten as soon as it answers. SDK 1 stays stateful.
+    """
+    if transport == "streamable-http" and _SDK_V2:
+        server.run(transport=transport, stateless_http=True)
+        return
+    server.run(transport=transport)
+
+
+async def report_progress(ctx, progress: float, total: float | None, message: str) -> None:
+    """Route SDK 1 progress onto the call's POST stream, not a session GET.
+
+    Early 1.x (1.21.1) sends it without related_request_id; 1.29.0 already
+    passes it.
+    """
+    if _SDK_V2:
+        await ctx.report_progress(progress, total, message)
+        return
+    request = ctx.request_context
+    token = request.meta.progressToken if request.meta else None
+    if token is not None:
+        await request.session.send_progress_notification(
+            progress_token=token,
+            progress=progress,
+            total=total,
+            message=message,
+            related_request_id=ctx.request_id,
+        )
 
 
 def build_server(*, name: str, instructions: str, lifespan, version: str):
@@ -123,6 +164,8 @@ __all__ = [
     "Context",
     "Server",
     "build_server",
+    "run_server",
+    "report_progress",
     "forbid_unknown_arguments",
     "unknown_argument_message",
 ]

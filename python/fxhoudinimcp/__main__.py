@@ -130,10 +130,11 @@ def main() -> None:
 
     # Force import all tool modules to register them
     from fxhoudinimcp import tools as _tools  # noqa: F401
+    from fxhoudinimcp._sdk import run_server
     from fxhoudinimcp.server import mcp  # noqa: F811
 
     transport = os.getenv("MCP_TRANSPORT", "stdio")
-    mcp.run(transport=transport)
+    run_server(mcp, transport=transport)
 
 
 if __name__ == "__main__":
