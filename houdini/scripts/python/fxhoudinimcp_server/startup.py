@@ -193,9 +193,13 @@ def start(
 
     # Import hwebserver_app to register the API functions
     from fxhoudinimcp_server import (
+        dialogs,
         handlers,  # noqa: F401
         hwebserver_app,  # noqa: F401
     )
+
+    # A dialog window holds the main thread; commands should say so.
+    dialogs.watch()
 
     if background is None:
         # hwebserver.run() already defaults in_background to isUIAvailable(),

@@ -22,7 +22,7 @@ import traceback
 import hwebserver
 
 # Internal
-from fxhoudinimcp_server import dispatcher
+from fxhoudinimcp_server import dialogs, dispatcher
 from fxhoudinimcp_server.serialize import json_default
 
 ###### Registration
@@ -161,13 +161,17 @@ def health(request):
 
     Version comes from the environment for the same reason -- Houdini exports
     HOUDINI_VERSION, so reporting it costs no HOM call. Anything needing the
-    scene itself belongs in session_info.
+    scene itself belongs in session_info. An open dialog window is named
+    from a float the main thread's timer writes (dialogs.py): no HOM either.
     """
-    return {
+    payload = {
         "status": "ok",
         "pid": os.getpid(),
         "houdini_version": os.environ.get("HOUDINI_VERSION", "unknown"),
     }
+    if (seconds := dialogs.open_for()) is not None:
+        payload["dialog"] = dialogs.message(seconds)
+    return payload
 
 
 @_api_function("mcp")
