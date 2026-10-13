@@ -275,7 +275,8 @@ async def test_reporting_bridge_heartbeats_while_a_command_runs(monkeypatch):
 
     inner.execute = slow
     ctx = MagicMock()
-    ctx.report_progress = AsyncMock()
+    progress = AsyncMock()
+    monkeypatch.setattr(server, "report_progress", progress)
     ctx.request_context.lifespan_context = {"bridge": inner}
     monkeypatch.setattr(server, "HoudiniBridge", MagicMock)
     ctx.request_context.lifespan_context["bridge"] = MagicMock()
@@ -283,8 +284,9 @@ async def test_reporting_bridge_heartbeats_while_a_command_runs(monkeypatch):
 
     bridge = server._get_bridge(ctx)
     assert await bridge.execute("scene.get_scene_info") == {"ok": "scene.get_scene_info"}
-    assert ctx.report_progress.await_count >= 1
-    message = ctx.report_progress.await_args.args[2]
+    assert progress.await_count >= 1
+    assert progress.await_args.args[0] is ctx
+    message = progress.await_args.args[3]
     assert message.startswith("scene.get_scene_info: Houdini working for")
 
 

@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 from fxhoudinimcp._loader import load_markdown
 
 # Third-party
-from fxhoudinimcp._sdk import Server, build_server, forbid_unknown_arguments
+from fxhoudinimcp._sdk import Server, build_server, forbid_unknown_arguments, report_progress
 from fxhoudinimcp._version import __version__
 
 # Internal
@@ -63,8 +63,8 @@ class _ReportingBridge:
             await asyncio.sleep(_HEARTBEAT)
             elapsed = time.monotonic() - started
             try:
-                await self._ctx.report_progress(
-                    elapsed, None, f"{command}: Houdini working for {elapsed:.0f}s"
+                await report_progress(
+                    self._ctx, elapsed, None, f"{command}: Houdini working for {elapsed:.0f}s"
                 )
             except Exception:  # noqa: BLE001 - a heartbeat never fails the command
                 return
