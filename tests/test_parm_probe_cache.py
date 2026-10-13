@@ -95,3 +95,24 @@ def test_display_goes_to_the_nearest_upstream_node_that_has_the_flag():
     settings.path.return_value = "/obj/lop/karma_settings"
     assert graph._upstream_with(Rop(settings), "setDisplayFlag") is settings
     assert graph._upstream_with(settings, "setDisplayFlag", include_self=True) is settings
+
+
+def test_only_strict_menus_of_the_unwired_probe_are_read(monkeypatch):
+    # Reading a menu runs its script: characterblendshapes' group (a toggle
+    # menu, not checked) raised on the unwired probe and opened Houdini's
+    # modal error window.
+    monkeypatch.setattr(graph, "_PARM_PROBE_CACHE", {})
+    scratch, node_type = _type("characterblendshapes_like")
+    probe = scratch.createNode.return_value
+    group = MagicMock()
+    group.name.return_value = "group"
+    mode = probe.parms.return_value[0]
+    probe.parms.return_value = [group, mode]
+    monkeypatch.setattr(graph, "_is_strict_menu", lambda template: template is mode.parmTemplate())
+    monkeypatch.setattr(graph, "_connectors_of", lambda node: {"inputs": [], "outputs": []})
+    monkeypatch.setattr(graph, "_instance_patterns", lambda node_type: [])
+    read = []
+    monkeypatch.setattr(graph, "menu_items", lambda parm: read.append(parm.name()) or ["a", "b"])
+    result = graph._parm_names_for_type(scratch, node_type)
+    assert read == ["mode"]
+    assert result[2] == {"mode": ["a", "b"]}

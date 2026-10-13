@@ -22,6 +22,7 @@ from fxhoudinimcp_server.callbacks import CallbackError, _is_python, callback_sc
 from fxhoudinimcp_server.dispatcher import register_handler
 from fxhoudinimcp_server.errors import readable_message
 from fxhoudinimcp_server.handlers.dop_handlers import dop_cache_note
+from fxhoudinimcp_server.menus import items as menu_items
 from fxhoudinimcp_server.serialize import geometry_summary, ramp_to_dict
 
 ###### Helpers
@@ -443,7 +444,7 @@ def locked_controllers(parm: hou.Parm) -> list[dict[str, Any]]:
             # Normal menu, not a Menu parm (measured on 22.0.429) -- or a toggle.
             menu: list[str] = []
             with contextlib.suppress(Exception):
-                menu = list(other.menuItems())
+                menu = menu_items(other)
             if not menu and template.type() != hou.parmTemplateType.Toggle:
                 continue
             entry: dict[str, Any] = {"parm": other.name(), "value": other.evalAsString()}
