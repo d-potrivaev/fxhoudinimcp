@@ -190,6 +190,23 @@ def claude_code_remove_argv() -> list[str]:
     return cli_remove_argv("claude-code")
 
 
+def run_cli(argv: list[str]) -> subprocess.CompletedProcess:
+    """Run a client CLI, its executable looked up the way `cli_available` finds it.
+
+    On Windows an npm-installed CLI is a `gemini.cmd` shim: `shutil.which`
+    finds it through PATHEXT, but CreateProcess given a bare `gemini` only tries
+    `.exe`, so the client was detected and then crashed the install with
+    FileNotFoundError (#161). Running the path `which` found closes that gap,
+    and a CLI that still cannot start is reported like any other failure
+    rather than ending the run before the remaining clients.
+    """
+    exe = shutil.which(argv[0]) or argv[0]
+    try:
+        return subprocess.run([exe, *argv[1:]], capture_output=True, text=True)
+    except OSError as exc:
+        return subprocess.CompletedProcess(argv, 1, stdout="", stderr=str(exc))
+
+
 def printable_argv(argv: list[str]) -> str:
     """An argv a person can paste back into a shell."""
     return " ".join(f'"{part}"' if " " in part else part for part in argv)
@@ -358,10 +375,10 @@ def install_cli_client(key: str, dry_run: bool) -> list[str]:
     if dry_run:
         return [f"  Would run: {printable}"]
 
-    result = subprocess.run(argv, capture_output=True, text=True)
+    result = run_cli(argv)
     if result.returncode != 0 and "already" in (result.stderr + result.stdout).lower():
-        subprocess.run(cli_remove_argv(key), capture_output=True, text=True)
-        result = subprocess.run(argv, capture_output=True, text=True)
+        run_cli(cli_remove_argv(key))
+        result = run_cli(argv)
     if result.returncode == 0:
         return [f"  Registered '{SERVER_NAME}' with {label}."]
     return [
@@ -408,12 +425,7 @@ def claude_code_current_command() -> str | None:
     looks for the "Command:" line rather than trying to parse the whole thing.
     Returns None when the server is not registered or the output is unfamiliar.
     """
-    try:
-        result = subprocess.run(
-            ["claude", "mcp", "get", SERVER_NAME], capture_output=True, text=True
-        )
-    except OSError:
-        return None
+    result = run_cli(["claude", "mcp", "get", SERVER_NAME])
     if result.returncode != 0:
         return None
     for line in (result.stdout or "").splitlines():
@@ -477,7 +489,7 @@ def repoint_claude_code() -> list[str]:
         return ["  Claude Code already points at this Python. Nothing to do."]
 
     removal = claude_code_remove_argv()
-    result = subprocess.run(removal, capture_output=True, text=True)
+    result = run_cli(removal)
     if result.returncode != 0:
         return [
             f"  Claude Code has '{SERVER_NAME}' pointing at {current or '<could not read it>'},",
@@ -486,7 +498,7 @@ def repoint_claude_code() -> list[str]:
         ]
 
     argv = claude_code_add_argv()
-    result = subprocess.run(argv, capture_output=True, text=True)
+    result = run_cli(argv)
     if result.returncode != 0:
         return [
             f"  Removed the old '{SERVER_NAME}' entry, but re-registering "
@@ -518,7 +530,7 @@ def install_claude_code(dry_run: bool) -> list[str]:
 
     # Its own CLI owns the config schema, so shell out rather than editing
     # ~/.claude.json directly and risking a shape this version does not expect.
-    result = subprocess.run(argv, capture_output=True, text=True)
+    result = run_cli(argv)
     if result.returncode == 0:
         return [
             f"  Registered '{SERVER_NAME}' with Claude Code (user scope).",

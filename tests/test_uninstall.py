@@ -326,7 +326,7 @@ def test_removing_something_absent_is_not_a_failure(monkeypatch):
     """The desired end state was already true, which is not an error."""
     monkeypatch.setattr(uninst, "claude_code_available", lambda: True)
     monkeypatch.setattr(
-        uninst.subprocess,
+        subprocess,
         "run",
         lambda argv, **kw: subprocess.CompletedProcess(
             argv, 1, stdout="", stderr="No MCP server found with name: fxhoudini"
@@ -342,7 +342,7 @@ def test_removing_something_absent_is_not_a_failure(monkeypatch):
 def test_a_genuine_failure_is_reported(monkeypatch):
     monkeypatch.setattr(uninst, "claude_code_available", lambda: True)
     monkeypatch.setattr(
-        uninst.subprocess,
+        subprocess,
         "run",
         lambda argv, **kw: subprocess.CompletedProcess(argv, 1, stdout="", stderr="disk on fire"),
     )
@@ -357,7 +357,7 @@ def test_removal_names_the_config_file(monkeypatch):
     """Same reason as install: which profile was touched is not obvious."""
     monkeypatch.setattr(uninst, "claude_code_available", lambda: True)
     monkeypatch.setattr(
-        uninst.subprocess,
+        subprocess,
         "run",
         lambda argv, **kw: subprocess.CompletedProcess(
             argv, 0, stdout="Removed\nFile modified: C:\\Users\\me\\.claude.json\n"
