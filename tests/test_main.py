@@ -70,7 +70,8 @@ def test_transport_is_still_overridable(monkeypatch):
     assert started == {"transport": "sse"}
 
 
-def test_http_entry_point_uses_stateless_transport(monkeypatch):
+def test_http_is_stateless_on_sdk_2_only(monkeypatch):
+    """SDK 1 enters the lifespan per stateless request: a bridge per call."""
     from fxhoudinimcp import _sdk, server
 
     started = {}
@@ -82,7 +83,8 @@ def test_http_entry_point_uses_stateless_transport(monkeypatch):
     if _sdk._SDK_V2:
         assert started["stateless_http"] is True
     else:
-        assert server.mcp.settings.stateless_http is True
+        assert "stateless_http" not in started
+        assert server.mcp.settings.stateless_http is False
 
 
 ###### Unrecognised arguments

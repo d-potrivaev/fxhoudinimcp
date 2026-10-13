@@ -10,11 +10,19 @@ from starlette.testclient import TestClient
 
 from fxhoudinimcp import _sdk
 
+# SDK 1 serves HTTP with sessions: run_server keeps it stateful.
+pytestmark = pytest.mark.skipif(not _sdk._SDK_V2, reason="stateless HTTP is SDK 2 only")
+
+LIFESPANS = []
+
 
 @pytest.fixture
 def http_client(monkeypatch):
+    LIFESPANS.clear()
+
     @asynccontextmanager
     async def lifespan(_server):
+        LIFESPANS.append(1)
         yield {}
 
     server = _sdk.build_server(
@@ -86,7 +94,22 @@ def test_legacy_clients_need_no_session_id(http_client):
         assert called["result"]["content"] == [{"type": "text", "text": name}]
 
 
-@pytest.mark.skipif(not _sdk._SDK_V2, reason="2026-07-28 requires SDK 2")
+def test_the_lifespan_is_entered_once_not_per_request(http_client):
+    """It holds the Houdini bridge: once per request, connect_houdini would not last."""
+    for request_id in (1, 2, 3):
+        rpc(
+            http_client,
+            "initialize",
+            {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "client", "version": "1.0"},
+            },
+            request_id=request_id,
+        )
+    assert len(LIFESPANS) == 1
+
+
 def test_modern_client_discovers_and_calls_without_initialize(http_client):
     meta = {
         "io.modelcontextprotocol/protocolVersion": "2026-07-28",

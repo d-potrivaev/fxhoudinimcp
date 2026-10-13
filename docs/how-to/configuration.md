@@ -35,21 +35,7 @@ The plugin takes port 8100, or the next free one when another Houdini holds it. 
 
 `stdio` (the default): the AI client starts the server as a child process. `MCP_TRANSPORT=streamable-http` runs it as an HTTP endpoint instead, for remote or shared setups.
 
-Streamable HTTP runs without protocol sessions. With MCP SDK 2.x, clients can
-use MCP 2026-07-28: call `server/discover`, then include the protocol version
-and client capabilities in each request's metadata, plus the
-`MCP-Protocol-Version` and `Mcp-Method` headers (`Mcp-Name` for named calls). There is no
-`Mcp-Session-Id` to retain. Older clients can still use `initialize`; SDK 1.x
-serves those older protocol revisions in stateless mode too. Install with
-`mcp>=2,<3` for the 2026-07-28 protocol; stateless mode alone does not add a
-new protocol revision to SDK 1.x.
-
-Responses retain request-scoped SSE so long Houdini commands can report
-progress. This changes the MCP transport, not the Houdini scene: the gateway
-still has one current Houdini target, and `connect_houdini` changes it for all
-clients of that process. Pin `HOUDINI_PORT` and use separate gateway processes
-when clients need independent targets. HTTP mode remains bound to loopback by
-the SDK; it does not add authentication or make public exposure safe.
+With MCP SDK 2 (`mcp>=2`), Streamable HTTP runs without protocol sessions: no client keeps an `Mcp-Session-Id`, and clients of MCP 2026-07-28 are served too. Every client of that process shares one current Houdini, so `connect_houdini` from one moves them all; run one process per client, each with its own `HOUDINI_PORT`, when they need different sessions. With SDK 1 HTTP keeps its sessions, and each client its own Houdini. Either way it listens on loopback by default and has no authentication.
 
 ## Security
 

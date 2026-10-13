@@ -35,22 +35,27 @@ except ImportError:  # pragma: no cover - depends on the installed mcp
 
 
 def run_server(server, *, transport: str) -> None:
-    """Run HTTP without protocol sessions, on either SDK major.
+    """Run the server; on SDK 2, HTTP without protocol sessions.
 
-    MCP 2026-07-28 requests cannot use the stateful HTTP transport. SDK 2
-    takes transport options at run time; SDK 1 reads them from settings.
-    Keep request-scoped SSE responses for the progress heartbeat.
+    Stateless, a client keeps no Mcp-Session-Id between requests (2026-07-28
+    clients never had one: SDK 2 serves them statelessly either way). SDK 2
+    enters the lifespan once per session manager, so the Houdini bridge
+    lives as long as the process. SDK 1 enters it once per stateless
+    request: a new bridge and port scan for every call, and connect_houdini
+    forgotten as soon as it answers. SDK 1 stays stateful.
     """
-    if transport == "streamable-http":
-        if _SDK_V2:
-            server.run(transport=transport, stateless_http=True)
-            return
-        server.settings.stateless_http = True
+    if transport == "streamable-http" and _SDK_V2:
+        server.run(transport=transport, stateless_http=True)
+        return
     server.run(transport=transport)
 
 
 async def report_progress(ctx, progress: float, total: float | None, message: str) -> None:
-    """Route SDK 1 progress onto the call's POST stream, not a session GET."""
+    """Route SDK 1 progress onto the call's POST stream, not a session GET.
+
+    Early 1.x (1.21.1) sends it without related_request_id; 1.29.0 already
+    passes it.
+    """
     if _SDK_V2:
         await ctx.report_progress(progress, total, message)
         return
