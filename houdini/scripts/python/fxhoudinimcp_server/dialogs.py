@@ -13,7 +13,12 @@ top-level QWidget titled "Houdini", with no text Qt can read. Measured: no
 other visible top-level widget has that title (the main window is
 "<hip> - Houdini ..."), and Qt timers keep firing while the window is up. So
 a timer on the main thread notes when one is shown, and the dispatcher, on
-its own thread, reads a float.
+its own thread, reads two floats.
+
+The timer also stamps when it last saw the window. Commands queued behind it
+run as soon as it is closed, before the next tick: one that cooks for a while
+would otherwise leave the window "open" and every new command refused. A
+window not seen for two ticks is not reported.
 """
 
 from __future__ import annotations
@@ -29,25 +34,35 @@ import hou
 _TITLE = "Houdini"
 _INTERVAL_MS = 500
 
-# time.monotonic() when the window was first seen, None while there is none.
+# time.monotonic() when the window was first seen, None while there is none,
+# and when the timer last saw it.
 _open_since: float | None = None
+_seen_at = 0.0
 _timer = None
 
 
+def _qt(name: str):
+    """PySide6 on 21.0 and later, PySide2 on 20.5."""
+    try:
+        return getattr(__import__("PySide6", fromlist=[name]), name)
+    except ImportError:
+        return getattr(__import__("PySide2", fromlist=[name]), name)
+
+
 def _tick() -> None:
-    global _open_since
+    global _open_since, _seen_at
     shown = False
     with contextlib.suppress(Exception):
-        from PySide6 import QtWidgets
-
         shown = any(
             widget.isVisible() and widget.windowTitle() == _TITLE
-            for widget in QtWidgets.QApplication.topLevelWidgets()
+            for widget in _qt("QtWidgets").QApplication.topLevelWidgets()
         )
     if not shown:
         _open_since = None
-    elif _open_since is None:
-        _open_since = time.monotonic()
+        return
+    _seen_at = time.monotonic()
+    if _open_since is None:
+        _open_since = _seen_at
 
 
 def watch() -> None:
@@ -56,9 +71,7 @@ def watch() -> None:
     if _timer is not None or not hou.isUIAvailable():
         return
     with contextlib.suppress(Exception):
-        from PySide6 import QtCore
-
-        timer = QtCore.QTimer()
+        timer = _qt("QtCore").QTimer()
         timer.setInterval(_INTERVAL_MS)
         timer.timeout.connect(_tick)
         timer.start()
@@ -67,24 +80,28 @@ def watch() -> None:
 
 def open_for() -> float | None:
     """Seconds a Houdini dialog window has been open, or None when there is none."""
-    since = _open_since
-    return None if since is None else time.monotonic() - since
+    since, now = _open_since, time.monotonic()
+    if since is None or now - _seen_at > 2 * _INTERVAL_MS / 1000:
+        return None
+    return now - since
 
 
-def message(seconds: float, queued: bool = False) -> str:
+def message(seconds: float, queued: bool | None = False) -> str:
     """What to tell the caller while a dialog window holds Houdini's main thread.
 
-    *queued*: the command already waits behind the window (it timed out
-    there) and runs when the window is closed; otherwise it was not sent.
+    *queued*: True, the command already waits on the window (it timed out
+    there); False, it was not sent; None, no command is concerned (health).
     """
-    fate = (
-        "this command is queued behind it and runs when the window is closed"
-        if queued
-        else "so this command was not queued (a queued one would run later, unseen)"
-    )
+    fate = {
+        # Queued behind the window, or the command opened it itself (a menu
+        # script it evaluated): either way it goes on when the window closes.
+        True: "; this command waits on it and goes on when the window is closed",
+        False: "; so this command was not queued (a queued one would run later, unseen)",
+        None: "",
+    }[queued]
     return (
         f"Houdini shows a dialog window (titled 'Houdini', open for {seconds:.0f} s) and "
         "waits for someone to click it: most likely an error message from a Python menu "
-        f"script or callback. Nothing runs until it is closed; {fate}. Ask the user to "
+        f"script or callback. Nothing runs until it is closed{fate}. Ask the user to "
         "read and close the window, then retry."
     )

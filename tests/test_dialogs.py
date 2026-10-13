@@ -56,6 +56,7 @@ def qt(monkeypatch):
     monkeypatch.setitem(sys.modules, "PySide6", SimpleNamespace(QtWidgets=widgets))
     monkeypatch.setitem(sys.modules, "PySide6.QtWidgets", widgets)
     monkeypatch.setattr(dialogs, "_open_since", None)
+    monkeypatch.setattr(dialogs, "_seen_at", 0.0)
     return shown
 
 
@@ -77,9 +78,29 @@ def test_a_window_titled_houdini_is_noted_until_it_closes(qt):
     assert dialogs.open_for() is None
 
 
+def test_a_window_not_seen_for_two_ticks_is_not_reported(qt, monkeypatch):
+    """Closed, and the commands behind it cook before the next tick: no refusal."""
+    qt.append(_widget("Houdini"))
+    dialogs._tick()
+    assert dialogs.open_for() is not None
+    monkeypatch.setattr(dialogs, "_seen_at", dialogs.time.monotonic() - 2)
+    assert dialogs.open_for() is None
+
+
+def test_pyside2_is_used_where_there_is_no_pyside6(qt, monkeypatch):
+    """Houdini 20.5 ships PySide2 only."""
+    qt.append(_widget("Houdini"))
+    monkeypatch.setitem(sys.modules, "PySide2", sys.modules["PySide6"])
+    monkeypatch.setitem(sys.modules, "PySide2.QtWidgets", sys.modules["PySide6.QtWidgets"])
+    monkeypatch.setitem(sys.modules, "PySide6", None)
+    dialogs._tick()
+    assert dialogs.open_for() is not None
+
+
 def test_the_message_says_whether_the_command_was_queued():
     assert "was not queued" in dialogs.message(3)
-    assert "queued behind it" in dialogs.message(3, queued=True)
+    assert "waits on it" in dialogs.message(3, queued=True)
+    assert "command" not in dialogs.message(3, queued=None)
 
 
 @pytest.fixture
@@ -93,6 +114,7 @@ def health(monkeypatch):
 
 def test_health_names_an_open_window(health, monkeypatch):
     monkeypatch.setattr(dialogs, "_open_since", dialogs.time.monotonic() - 5)
+    monkeypatch.setattr(dialogs, "_seen_at", dialogs.time.monotonic())
     assert "dialog window" in health(None)["dialog"]
 
 

@@ -313,7 +313,8 @@ def dispatch(command: str, params: dict[str, Any]) -> dict[str, Any]:
                 }
                 if (seconds := dialogs.open_for()) is not None:
                     # Not working: waiting for a click. The command is queued
-                    # behind the window and runs when it is closed.
+                    # behind the window, or opened it itself, and goes on
+                    # when it is closed.
                     result["error"]["code"] = "HOUDINI_DIALOG"
                     result["error"]["message"] = (
                         f"Command '{command}' did not complete within {timeout:g} seconds. "

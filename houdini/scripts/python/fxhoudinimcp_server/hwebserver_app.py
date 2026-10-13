@@ -170,7 +170,7 @@ def health(request):
         "houdini_version": os.environ.get("HOUDINI_VERSION", "unknown"),
     }
     if (seconds := dialogs.open_for()) is not None:
-        payload["dialog"] = dialogs.message(seconds)
+        payload["dialog"] = dialogs.message(seconds, queued=None)
     return payload
 
 

@@ -164,6 +164,7 @@ class TestCommandTimeout:
         closed, long after its reply; it is answered at once instead."""
         monkeypatch.setattr(_disp, "HAS_HDEFEREVAL", True)
         monkeypatch.setattr(_disp.dialogs, "_open_since", _disp.dialogs.time.monotonic() - 3)
+        monkeypatch.setattr(_disp.dialogs, "_seen_at", _disp.dialogs.time.monotonic())
         fake = MagicMock()
         monkeypatch.setattr(_disp, "hdefereval", fake)
         _handler_registry.clear()
@@ -184,7 +185,7 @@ class TestCommandTimeout:
 
         def held(fn):
             # The window opens while the command waits for the main thread.
-            _disp.dialogs._open_since = _disp.dialogs.time.monotonic()
+            _disp.dialogs._open_since = _disp.dialogs._seen_at = _disp.dialogs.time.monotonic()
             release.wait(2)
             return fn()
 
@@ -198,7 +199,7 @@ class TestCommandTimeout:
         finally:
             release.set()
         assert result["error"]["code"] == "HOUDINI_DIALOG"
-        assert "queued behind it" in result["error"]["message"]
+        assert "waits on it" in result["error"]["message"]
 
     def test_a_base_exception_from_the_main_thread_is_named(self, monkeypatch):
         """A KeyboardInterrupt used to leave the caller a bare KeyError 'result'."""
