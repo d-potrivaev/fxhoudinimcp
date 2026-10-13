@@ -1085,6 +1085,13 @@ def set_current_network(network_path: str, other_objects: str | None = "hide") -
     by default, so work in one object is not drawn over, and slowed by, the
     rest of the scene. No display flag changes.
 
+    A DOP network becomes the current one, where DOP shelf tools build, as
+    Houdini does when the editor enters it (measured on 22.0.429; it stays
+    current after the editor leaves). model_popnet does not make its new
+    network current, and a session set it through execute_python, not
+    knowing this did: it is set here explicitly and named in
+    `current_dop_network`.
+
     Args:
         network_path: Path to the network to navigate to (e.g. '/obj/geo1').
         other_objects: "hide", "ghost", "show", or None to leave the viewer as is.
@@ -1110,12 +1117,20 @@ def set_current_network(network_path: str, other_objects: str | None = "hide") -
     with keep_viewer_state():
         network_editor.cd(network_path)
 
-    return {
+    reply = {
         "success": True,
         "network_path": network_path,
         "pane_name": network_editor.name(),
         "other_objects": set_other_objects(other_objects),
     }
+    is_dop = False
+    with contextlib.suppress(Exception):
+        is_dop = node.childTypeCategory() == hou.dopNodeTypeCategory()
+    if is_dop:
+        hou.setCurrentDopNet(node)
+        with contextlib.suppress(Exception):
+            reply["current_dop_network"] = hou.currentDopNet().path()
+    return reply
 
 
 ###### viewport.find_error_nodes
