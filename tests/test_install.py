@@ -477,6 +477,8 @@ def _runs(monkeypatch, *results: int) -> list[list[str]]:
         return subprocess.CompletedProcess(argv, code, stdout="", stderr=stderr)
 
     monkeypatch.setattr(inst.subprocess, "run", fake_run)
+    # Bare names, whatever CLIs this machine has: run_cli resolves through which.
+    monkeypatch.setattr(inst.shutil, "which", lambda name: None)
     return calls
 
 
@@ -753,6 +755,32 @@ def test_auto_keeps_every_detected_client_and_none_empties_it():
     assert inst.resolve_client_targets(["both"], present) == ["claude-code", "claude-desktop"]
     assert inst.resolve_client_targets(["cursor", "auto"], present) == ["cursor", "codex"]
     assert inst.resolve_client_targets(["cursor", "none"], present) == []
+
+
+def test_a_cli_is_run_from_the_path_which_found_it(monkeypatch):
+    """#161: npm's gemini.cmd is found by which, but CreateProcess("gemini") is not."""
+    calls = []
+    monkeypatch.setattr(inst.shutil, "which", lambda name: f"/npm/{name}.cmd")
+    monkeypatch.setattr(
+        inst.subprocess,
+        "run",
+        lambda argv, **kw: calls.append(argv) or subprocess.CompletedProcess(argv, 0),
+    )
+    inst.run_cli(["gemini", "mcp", "add"])
+    assert calls == [["/npm/gemini.cmd", "mcp", "add"]]
+
+
+def test_a_cli_that_cannot_start_is_a_failure_not_a_crash(monkeypatch):
+    """#161: the FileNotFoundError ended the install before the other clients."""
+    monkeypatch.setattr(inst, "cli_available", lambda key: True)
+    monkeypatch.setattr(inst.shutil, "which", lambda name: None)
+
+    def missing(argv, **kwargs):
+        raise FileNotFoundError(2, "The system cannot find the file specified")
+
+    monkeypatch.setattr(inst.subprocess, "run", missing)
+    lines = inst.install_cli_client("gemini", dry_run=False)
+    assert any("registration failed" in line for line in lines)
 
 
 def test_cli_client_repoints_when_the_entry_already_exists(monkeypatch):

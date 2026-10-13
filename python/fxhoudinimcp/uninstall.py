@@ -34,7 +34,6 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -56,6 +55,7 @@ from fxhoudinimcp.install import (
     printable_argv,
     resolve_client_targets,
     restart_note,
+    run_cli,
 )
 
 
@@ -175,7 +175,7 @@ def remove_cli_client(key: str, dry_run: bool) -> list[str]:
         ]
     if dry_run:
         return [f"  Would run: {printable}"]
-    result = subprocess.run(argv, capture_output=True, text=True)
+    result = run_cli(argv)
     if result.returncode == 0:
         return [f"  Removed '{SERVER_NAME}' from {label}."]
     detail = ((result.stderr or "") + (result.stdout or "")).strip().splitlines()
@@ -200,7 +200,7 @@ def remove_claude_code(dry_run: bool) -> list[str]:
     if dry_run:
         return [f"  Would run: {printable}"]
 
-    result = subprocess.run(argv, capture_output=True, text=True)
+    result = run_cli(argv)
     if result.returncode == 0:
         return [
             f"  Removed '{SERVER_NAME}' from Claude Code (user scope).",
