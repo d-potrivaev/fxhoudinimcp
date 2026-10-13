@@ -159,6 +159,48 @@ class TestCommandTimeout:
         assert result["error"]["code"] == "TIMEOUT"
         assert "FXHOUDINIMCP_TIMEOUT_SLOW_CMD" in result["error"]["message"]
 
+    def test_a_command_is_not_queued_behind_an_open_dialog(self, monkeypatch):
+        """Queued behind Houdini's dialog window it would run when the window is
+        closed, long after its reply; it is answered at once instead."""
+        monkeypatch.setattr(_disp, "HAS_HDEFEREVAL", True)
+        monkeypatch.setattr(_disp.dialogs, "_open_since", _disp.dialogs.time.monotonic() - 3)
+        monkeypatch.setattr(_disp.dialogs, "_seen_at", _disp.dialogs.time.monotonic())
+        fake = MagicMock()
+        monkeypatch.setattr(_disp, "hdefereval", fake)
+        _handler_registry.clear()
+        register_handler("any.cmd", lambda: {"ok": True})
+        result = dispatch("any.cmd", {})
+        assert result["error"]["code"] == "HOUDINI_DIALOG"
+        assert "not queued" in result["error"]["message"]
+        fake.executeInMainThreadWithResult.assert_not_called()
+
+    def test_a_timeout_behind_a_dialog_names_it(self, monkeypatch):
+        """Not "still working": waiting for a click, and queued until then."""
+        import threading
+
+        monkeypatch.setattr(_disp, "HAS_HDEFEREVAL", True)
+        monkeypatch.setattr(_disp.dialogs, "_open_since", None)
+        monkeypatch.setenv("FXHOUDINIMCP_TIMEOUT_SLOW_CMD", "0.05")
+        release = threading.Event()
+
+        def held(fn):
+            # The window opens while the command waits for the main thread.
+            _disp.dialogs._open_since = _disp.dialogs._seen_at = _disp.dialogs.time.monotonic()
+            release.wait(2)
+            return fn()
+
+        fake = MagicMock()
+        fake.executeInMainThreadWithResult = held
+        monkeypatch.setattr(_disp, "hdefereval", fake)
+        _handler_registry.clear()
+        register_handler("slow.cmd", lambda: {"ok": True})
+        try:
+            result = dispatch("slow.cmd", {})
+        finally:
+            release.set()
+        assert result["error"]["code"] == "HOUDINI_DIALOG"
+        assert "waits on it" in result["error"]["message"]
+
     def test_a_base_exception_from_the_main_thread_is_named(self, monkeypatch):
         """A KeyboardInterrupt used to leave the caller a bare KeyError 'result'."""
         monkeypatch.setattr(_disp, "HAS_HDEFEREVAL", True)

@@ -26,6 +26,7 @@ try:
 except ImportError:
     HAS_HDEFEREVAL = False
 
+from fxhoudinimcp_server import dialogs
 from fxhoudinimcp_server.errors import readable_message
 
 logger = logging.getLogger(__name__)
@@ -266,7 +267,14 @@ def dispatch(command: str, params: dict[str, Any]) -> dict[str, Any]:
 
     timeout = command_timeout(command)
     try:
-        if HAS_HDEFEREVAL:
+        if HAS_HDEFEREVAL and (seconds := dialogs.open_for()) is not None:
+            # Queued behind the window it would run whenever someone closes
+            # it, long after this reply.
+            result = {
+                "status": "error",
+                "error": {"code": "HOUDINI_DIALOG", "message": dialogs.message(seconds)},
+            }
+        elif HAS_HDEFEREVAL:
             # Run hdefereval call in a worker thread so we can enforce a timeout
             container: dict[str, Any] = {}
 
@@ -303,6 +311,15 @@ def dispatch(command: str, params: dict[str, Any]) -> dict[str, Any]:
                         ),
                     },
                 }
+                if (seconds := dialogs.open_for()) is not None:
+                    # Not working: waiting for a click. The command is queued
+                    # behind the window, or opened it itself, and goes on
+                    # when it is closed.
+                    result["error"]["code"] = "HOUDINI_DIALOG"
+                    result["error"]["message"] = (
+                        f"Command '{command}' did not complete within {timeout:g} seconds. "
+                        + dialogs.message(seconds, queued=True)
+                    )
             elif "error" in container:
                 result = {
                     "status": "error",
