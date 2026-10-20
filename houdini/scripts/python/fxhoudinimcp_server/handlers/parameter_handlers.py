@@ -2509,10 +2509,16 @@ def _check_promotion(index: int, item: Any, seen: set) -> tuple[hou.VopNode, str
     # "success" with destmax's value and drove srcmax from it (22.0.368).
     parm_name = str(name or wanted)
     if kind != "constant":
-        if ("parm", parm_name) in seen:
-            return f"promotions[{index}]: parm name {parm_name!r} is used twice in this batch; give a name"
-        seen.add(("parm", parm_name))
-        taken = next((o for o in _vop_owners(node) if o.parmTuple(parm_name) is not None), None)
+        # Reserved per owner: the same name in two separate VOP networks is two parms.
+        owners = _vop_owners(node)
+        keys = {("parm", o.path(), parm_name) for o in owners}
+        if keys & seen:
+            return (
+                f"promotions[{index}]: parm name {parm_name!r} is used twice in this batch "
+                "for the same network; give a name"
+            )
+        seen |= keys
+        taken = next((o for o in owners if o.parmTuple(parm_name) is not None), None)
         if taken is not None:
             return (
                 f"promotions[{index}]: {taken.path()} already has a parm {parm_name!r}; "

@@ -152,6 +152,26 @@ class TestPromoteVopParameters:
                 ]
             )
 
+    def test_the_same_name_in_two_separate_networks_is_two_parms(self, popvop, monkeypatch):
+        other_owner = MagicMock()
+        other_owner.path.return_value = "/obj/geo/attribvop1"
+        other_owner.type.return_value.category.return_value.name.return_value = "Sop"
+        other_owner.parm.return_value = None
+        other_owner.parmTuple.return_value = None
+        other_owner.parent.return_value = None
+        other = _FakeVop("/obj/geo/attribvop1/multiply1", ("input1", "input2"), other_owner)
+        node = parameters.hou.node
+        monkeypatch.setattr(
+            parameters.hou, "node", lambda p: other if p == other.path() else node(p), raising=False
+        )
+        parameters._promote_vop_parameters(
+            [
+                {"node_path": popvop.fit.path(), "input": "srcmax", "name": "input2"},
+                {"node_path": other.path(), "input": "input2"},
+            ]
+        )
+        assert len(popvop.fit.made) == 1 and len(other.made) == 1
+
     def test_an_unknown_input_gets_a_suggestion(self, popvop):
         with pytest.raises(ValueError, match=r"Did you mean \['input2'"):
             parameters._promote_vop_parameters(
