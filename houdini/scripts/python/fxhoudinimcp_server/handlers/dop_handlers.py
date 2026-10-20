@@ -288,16 +288,36 @@ def _get_simulation_info(node_path: str) -> dict:
     time() is that of its last cook. `simulation_frame` is the frame of that
     time, with a `note` when it is not the scene's. A cook that fails is
     named in `cook_error`, not blamed on the cache.
+
+    A scene ahead of the simulation is simulated up to its frame here (the
+    cook and sim.objects() both do it: 150 frames on 22.0.368). As in
+    cook_frame_range, that runs under Houdini's interrupt dialog with no
+    deadline (dispatcher), so the artist can stop it and the client is not
+    told "timeout" while Houdini keeps cooking.
     """
     node = _get_dop_node(node_path)
     cook_error = None
-    try:
-        node.cook()
-    except Exception as e:
-        cook_error = str(e)
-    sim = _get_simulation(node_path)
-
-    objects = sim.objects()
+    interrupted = False
+    with hou.InterruptableOperation(
+        "Cooking simulation",
+        long_operation_name=f"get_simulation_info {node_path}",
+        open_interrupt_dialog=True,
+    ):
+        try:
+            node.cook()
+        except Exception as e:
+            # Esc raises OperationInterrupted, or a bare OperationFailed with
+            # "Cooking was interrupted." on the node (22.0, cook_frame_range).
+            errors = ""
+            with contextlib.suppress(Exception):
+                errors = " ".join(node.errors()).lower()
+            if type(e).__name__ == "OperationInterrupted" or "cooking was interrupted" in errors:
+                interrupted = True
+            else:
+                cook_error = str(e)
+        sim = _get_simulation(node_path)
+        # objects() would carry on simulating where the artist stopped it.
+        objects = None if interrupted else sim.objects()
     object_count = len(objects) if objects is not None else 0
 
     # Memory usage (bytes) -- may not be available in all Houdini versions
@@ -339,7 +359,14 @@ def _get_simulation_info(node_path: str) -> dict:
     with contextlib.suppress(Exception):
         sim_frame = round(hou.timeToFrame(sim_time), 3)
         reply["simulation_frame"] = sim_frame
-        if not cook_error:
+        if interrupted:
+            reply["interrupted"] = True
+            reply["object_count"] = None
+            reply["note"] = (
+                f"Stopped from Houdini's interrupt dialog at frame {sim_frame:g} of {frame:g}; "
+                "cook_frame_range gets the rest of the way."
+            )
+        elif not cook_error:
             note = _cache_eviction_note(node, sim_frame, frame, memory_bytes)
             if note:
                 reply["note"] = note

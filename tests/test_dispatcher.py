@@ -119,7 +119,13 @@ class TestCommandTimeout:
         assert _disp.command_timeout("nodes.create_node") == 5.0
 
     @pytest.mark.parametrize(
-        "command", ["cache.write_cache", "rendering.start_render", "nodes.press_button"]
+        "command",
+        [
+            "cache.write_cache",
+            "rendering.start_render",
+            "nodes.press_button",
+            "dops.get_simulation_info",
+        ],
     )
     def test_global_does_not_put_a_deadline_back(self, monkeypatch, command):
         # `fxhoudinimcp install` writes FXHOUDINIMCP_TIMEOUT=120 into the package.
