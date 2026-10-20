@@ -299,6 +299,15 @@ def _cache_eviction_note(
     if start is None or frame <= start or abs(sim_frame - frame) < 0.5:
         return None
     if sim_frame < frame:
+        # Checked live on 22.0.368: with the Simulation toggle off a cook raises
+        # nothing and the network stays where it was.
+        with contextlib.suppress(Exception):
+            if not hou.simulationEnabled():
+                return (
+                    f"The simulation holds frame {sim_frame:g} while the scene is at frame {frame:g}: "
+                    "simulation is turned off in Houdini (hou.simulationEnabled() is False). "
+                    "Ask before turning it back on."
+                )
         return (
             f"The simulation holds frame {sim_frame:g} while the scene is at frame {frame:g}: it has not "
             "simulated up to it, though the cook raised no error, so the memory cache is not the cause. "
