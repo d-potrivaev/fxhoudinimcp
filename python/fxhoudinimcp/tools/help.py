@@ -52,7 +52,12 @@ async def search_help(
 
 
 @mcp.tool()
-async def get_help_page(ctx: Context, path: str) -> dict:
+async def get_help_page(
+    ctx: Context,
+    path: str,
+    offset: int = 0,
+    section: str | None = None,
+) -> dict:
     """Fetch one page of Houdini's shipped documentation by path.
 
     Read the real reference instead of writing from memory — especially
@@ -60,12 +65,23 @@ async def get_help_page(ctx: Context, path: str) -> dict:
     wrangle, and expression pages (expressions/...) before channel
     expressions.
 
+    A page comes 20,000 characters at a time. A longer one is `truncated`
+    and names `next_offset` and its `sections` with their offsets: read on
+    with offset, or jump to a section by its title.
+
     Args:
         path: As returned by search_help — e.g. "nodes/sop/scatter",
             "vex/functions/noise", "expressions/ch".
+        offset: Character offset to start from (a `next_offset`).
+        section: Section title to start at, e.g. "Shape"; overrides offset.
     """
     bridge = _get_bridge(ctx)
-    return await bridge.execute("help.get_help_page", {"path": path})
+    params: dict[str, Any] = {"path": path}
+    if offset:
+        params["offset"] = offset
+    if section is not None:
+        params["section"] = section
+    return await bridge.execute("help.get_help_page", params)
 
 
 @mcp.tool()
