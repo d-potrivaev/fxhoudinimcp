@@ -430,6 +430,7 @@ def test_get_simulation_info_cooks_first(monkeypatch):
     sim.memoryUsage.return_value = 4145619220
     sim.objects.return_value = []
     monkeypatch.setattr(dops, "_get_dop_node", lambda path: node)
+    monkeypatch.setattr(dops, "_require_dops", lambda node: None)
     monkeypatch.setattr(dops, "_get_simulation", lambda path: sim)
     monkeypatch.setattr(hou, "frame", lambda: 10.0)
     monkeypatch.setattr(hou, "timeToFrame", lambda t: t * 24 + 1)
@@ -449,6 +450,7 @@ def test_a_failed_cook_is_reported_not_blamed_on_the_cache(monkeypatch):
     sim.memoryUsage.return_value = 1
     sim.objects.return_value = []
     monkeypatch.setattr(dops, "_get_dop_node", lambda path: node)
+    monkeypatch.setattr(dops, "_require_dops", lambda node: None)
     monkeypatch.setattr(dops, "_get_simulation", lambda path: sim)
     monkeypatch.setattr(hou, "frame", lambda: 10.0)
     monkeypatch.setattr(hou, "timeToFrame", lambda t: t * 24 + 1)
@@ -470,6 +472,7 @@ def test_a_cook_stopped_from_the_dialog_is_named_and_not_carried_on(monkeypatch)
     sim.time.return_value = 1.958333
     sim.memoryUsage.return_value = 1
     monkeypatch.setattr(dops, "_get_dop_node", lambda path: node)
+    monkeypatch.setattr(dops, "_require_dops", lambda node: None)
     monkeypatch.setattr(dops, "_get_simulation", lambda path: sim)
     monkeypatch.setattr(hou, "frame", lambda: 150.0)
     monkeypatch.setattr(hou, "timeToFrame", lambda t: t * 24 + 1)
@@ -490,6 +493,7 @@ def test_esc_during_objects_is_named_too(monkeypatch):
     sim.time.return_value = 1.958333
     sim.memoryUsage.return_value = 1
     monkeypatch.setattr(dops, "_get_dop_node", lambda path: node)
+    monkeypatch.setattr(dops, "_require_dops", lambda node: None)
     monkeypatch.setattr(dops, "_get_simulation", lambda path: sim)
     monkeypatch.setattr(hou, "frame", lambda: 150.0)
     monkeypatch.setattr(hou, "timeToFrame", lambda t: t * 24 + 1)
@@ -497,3 +501,20 @@ def test_esc_during_objects_is_named_too(monkeypatch):
     assert sim.objects.call_count == 1
     assert reply["interrupted"] is True and reply["object_count"] is None
     assert "frame 48 of 150" in reply["note"] and "cook_error" not in reply
+
+
+def test_a_sop_solver_is_refused_before_any_cook_with_its_dopnet_named(monkeypatch):
+    """simulation() on a Pyro Solver SOP raised ObjectWasDeleted: name the dopnet inside."""
+    hou = dops.hou
+    dop = object()
+    monkeypatch.setattr(hou, "dopNodeTypeCategory", lambda: dop, raising=False)
+    inner = MagicMock()
+    inner.childTypeCategory.return_value = dop
+    inner.path.return_value = "/obj/fx/pyro_solver1/dopnet1"
+    node = MagicMock()
+    node.path.return_value = "/obj/fx/pyro_solver1"
+    node.allSubChildren.return_value = [inner]
+    monkeypatch.setattr(dops, "_get_dop_node", lambda path: node)
+    with pytest.raises(Exception, match="pyro_solver1/dopnet1"):
+        dops._get_simulation_info("/obj/fx/pyro_solver1")
+    node.cook.assert_not_called()
