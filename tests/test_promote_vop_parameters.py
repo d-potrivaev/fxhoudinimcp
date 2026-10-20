@@ -135,6 +135,23 @@ class TestPromoteVopParameters:
             )
         assert popvop.fit.made == [] and popvop.pressed == []
 
+    def test_a_name_the_owner_already_has_is_refused(self, popvop):
+        popvop.owner.shown.add("destmin")
+        with pytest.raises(ValueError, match="already has a parm 'destmin'"):
+            parameters._promote_vop_parameters(
+                [{"node_path": popvop.fit.path(), "input": "srcmax", "name": "destmin"}]
+            )
+        assert popvop.fit.made == []
+
+    def test_a_name_used_twice_in_the_batch_is_refused(self, popvop):
+        with pytest.raises(ValueError, match="'input2' is used twice"):
+            parameters._promote_vop_parameters(
+                [
+                    {"node_path": popvop.mul.path(), "input": "input2"},
+                    {"node_path": popvop.fit.path(), "input": "srcmax", "name": "input2"},
+                ]
+            )
+
     def test_an_unknown_input_gets_a_suggestion(self, popvop):
         with pytest.raises(ValueError, match=r"Did you mean \['input2'"):
             parameters._promote_vop_parameters(

@@ -528,6 +528,10 @@ class TestCurrentDopNetwork:
         ("^project_05* /obj/project_05_magic_smoke", False),
         ("@shown", False),
         ("/obj/project_04_fern @shown", False),
+        # Houdini reads commas as separators too (22.0.368).
+        ("nothing,project_05_magic_smoke", False),
+        ("project_04_fern, project_06", True),
+        ("{project_04_fern,project_05_magic_smoke}", False),
     ],
 )
 def test_pattern_hides(pattern, hides):

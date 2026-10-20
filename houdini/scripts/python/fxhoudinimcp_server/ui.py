@@ -19,6 +19,7 @@ from __future__ import annotations
 # Built-in
 import contextlib
 import fnmatch
+import re
 from collections.abc import Iterator
 
 # Third-party
@@ -109,11 +110,12 @@ def pattern_hides(pattern: str, obj_path: str) -> bool:
     """Whether the Visible Objects *pattern* certainly leaves *obj_path* out.
 
     Tokens are read left to right as Houdini does, a later one overriding an
-    earlier one: "*", a name or path with wildcards, "^" to take away. A
-    bundle (@...) is not resolved, so a pattern holding one never counts as
-    hiding anything.
+    earlier one: "*", a name or path with wildcards, "^" to take away,
+    separated by spaces or commas ("geo1,geo2" shows both, 22.0.368). A
+    bundle (@...) or a brace group is not resolved, so a pattern holding one
+    never counts as hiding anything.
     """
-    tokens = str(pattern).split()
+    tokens = [t for t in re.split(r"[\s,]+", str(pattern)) if t]
     if not tokens:
         return False
     name = obj_path.rsplit("/", 1)[-1]
@@ -121,7 +123,7 @@ def pattern_hides(pattern: str, obj_path: str) -> bool:
     for token in tokens:
         taken_away = token.startswith("^")
         token = token.lstrip("^")
-        if token.startswith("@"):
+        if token.startswith("@") or "{" in token or "}" in token:
             return False
         if fnmatch.fnmatchcase(obj_path if token.startswith("/") else name, token):
             shown = not taken_away
