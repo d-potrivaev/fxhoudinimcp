@@ -399,10 +399,27 @@ _DEFAULT = {"timeoffset": 0, "timescale": 1, "startframe": 1, "cachemaxsize": 50
 
 
 def test_evicted_frame_is_named():
-    note = dops._cache_eviction_note(_dopnet(_DEFAULT), 48, 10, 4145619220)
+    note = dops._cache_eviction_note(_dopnet(_DEFAULT), 48, 10, 4145619220, 2)
     assert "frame 48" in note and "frame 10" in note
+    assert "get frame 48's state" in note and "no geometry" not in note
     assert "cachemaxsize 5000 MB" in note and "3954 MB" in note
     assert "reset_simulation" in note
+
+
+def test_an_empty_simulation_is_not_called_a_frame():
+    # Measured: a 1 MB cache cooked 1-20 and set back to 5 held frame 19's time
+    # with no objects and no points.
+    note = dops._cache_eviction_note(_dopnet(_DEFAULT), 19, 5, 4408683, 0)
+    assert "frame 19 while the scene is at frame 5" in note
+    assert "no geometry" in note and "state" not in note
+
+
+def test_a_simulation_behind_the_scene_is_not_called_eviction():
+    # Measured: failed at frames 2-3, forced again at 3 -- no error, frame 1, 0 MB.
+    note = dops._cache_eviction_note(_dopnet(_DEFAULT), 1, 3, 0, 1)
+    assert "frame 1 while the scene is at frame 3" in note
+    assert "has not simulated up to it" in note and "no longer in" not in note
+    assert "cook_frame_range forward from frame 1" in note
 
 
 @pytest.mark.parametrize(
@@ -437,7 +454,7 @@ def test_get_simulation_info_cooks_first(monkeypatch):
     reply = dops._get_simulation_info("/obj/fx/popnet")
     assert order == ["cook", "time"]
     assert reply["simulation_frame"] == 48 and reply["current_frame"] == 10
-    assert "frame 48" in reply["note"]
+    assert "frame 48" in reply["note"] and "no geometry" in reply["note"]
 
 
 def test_a_failed_cook_is_reported_not_blamed_on_the_cache(monkeypatch):
