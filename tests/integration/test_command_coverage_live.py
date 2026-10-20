@@ -51,6 +51,39 @@ class TestDops:
             allow_error=True,
         )
 
+    def test_a_frame_the_cache_no_longer_keeps_is_named(self, call):
+        """Going back past the memory cache, Houdini gives the frame it kept."""
+        geo = hou.node("/obj").createNode("geo", "evict")
+        grid = geo.createNode("grid")
+        grid.parm("rows").set(60)
+        grid.parm("cols").set(60)
+        dop = geo.createNode("dopnet", "popnet")
+        dop.parm("cachemaxsize").set(1)
+        dop.setInput(0, grid)
+        popobject = dop.createNode("popobject")
+        source = dop.createNode("popsource")
+        # Every grid point is born each frame: 4 MB by frame 20, past the 1 MB cache.
+        source.parm("usecontextgeo").set("first")
+        source.parm("emittype").set("allpoint")
+        solver = dop.createNode("popsolver")
+        output = dop.createNode("output")
+        solver.setInput(0, popobject)
+        solver.setInput(2, source)
+        output.setInput(0, solver)
+        output.setDisplayFlag(True)
+        for frame in range(1, 21):
+            hou.setFrame(frame)
+            dop.geometry()
+        info = call("dops.get_simulation_info", node_path=dop.path())
+        assert info["simulation_frame"] == 20 and "note" not in info, info
+        hou.setFrame(5)
+        info = call("dops.get_simulation_info", node_path=dop.path())
+        assert info["current_frame"] == 5 and info["simulation_frame"] != 5, info
+        assert "frame 5" in info["note"] and "cachemaxsize 1 MB" in info["note"], info
+        hou.setFrame(1)
+        info = call("dops.get_simulation_info", node_path=dop.path())
+        assert info["simulation_frame"] == 1 and "note" not in info, info
+
 
 class TestDopRelationships:
     def test_merge_relationship_is_reported(self, call):

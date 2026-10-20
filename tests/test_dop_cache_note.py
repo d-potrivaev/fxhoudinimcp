@@ -381,3 +381,59 @@ class TestARewiredSolver:
             nodes.reorder_inputs,
         ):
             assert "rewired=True" in inspect.getsource(handler), handler.__name__
+
+
+# Going back to a frame the memory cache no longer keeps, Houdini gives the
+# frame it kept instead of simulating again (22.0.466: at frame 10 a POP
+# network of 7.7 M points gave frame 48, every SOP below it too).
+# get_simulation_info cooks the network, names the frame it holds and says so.
+
+
+def _dopnet(parms):
+    node = MagicMock()
+    node.evalParm.side_effect = lambda name: parms[name]
+    return node
+
+
+_DEFAULT = {"timeoffset": 0, "timescale": 1, "startframe": 1, "cachemaxsize": 5000}
+
+
+def test_evicted_frame_is_named():
+    note = dops._cache_eviction_note(_dopnet(_DEFAULT), 48, 10, 4145619220)
+    assert "frame 48" in note and "frame 10" in note
+    assert "cachemaxsize 5000 MB" in note and "3954 MB" in note
+    assert "reset_simulation" in note
+
+
+@pytest.mark.parametrize(
+    ("sim_frame", "frame", "parms"),
+    [
+        (10, 10, _DEFAULT),
+        (1, 1, _DEFAULT),
+        (1, 0, _DEFAULT),
+        (48, 10, {**_DEFAULT, "timeoffset": 0.5}),
+        (48, 10, {**_DEFAULT, "timescale": 2}),
+    ],
+)
+def test_no_note_when_the_frames_agree_or_time_is_remapped(sim_frame, frame, parms):
+    assert dops._cache_eviction_note(_dopnet(parms), sim_frame, frame, 1) is None
+
+
+def test_get_simulation_info_cooks_first(monkeypatch):
+    hou = dops.hou
+    order = []
+    node = _dopnet(_DEFAULT)
+    node.cook.side_effect = lambda *a, **k: order.append("cook")
+    node.type.return_value.name.return_value = "dopnet"
+    sim = MagicMock()
+    sim.time.side_effect = lambda: order.append("time") or 1.958333
+    sim.memoryUsage.return_value = 4145619220
+    sim.objects.return_value = []
+    monkeypatch.setattr(dops, "_get_dop_node", lambda path: node)
+    monkeypatch.setattr(dops, "_get_simulation", lambda path: sim)
+    monkeypatch.setattr(hou, "frame", lambda: 10.0)
+    monkeypatch.setattr(hou, "timeToFrame", lambda t: t * 24 + 1)
+    reply = dops._get_simulation_info("/obj/fx/popnet")
+    assert order == ["cook", "time"]
+    assert reply["simulation_frame"] == 48 and reply["current_frame"] == 10
+    assert "frame 48" in reply["note"]

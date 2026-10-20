@@ -247,9 +247,50 @@ def _records_to_dict(data: hou.DopData) -> dict:
 ###### Handlers
 
 
+def _cache_eviction_note(
+    node: hou.Node, sim_frame: float, frame: float, memory_bytes: int
+) -> str | None:
+    """Why the simulation holds another frame than the scene, or None when it does not.
+
+    Measured on 22.0.466 on a POP network of 7.7 M points:
+    cooked 1-50, the 5000 MB memory cache kept the late frames only, and at
+    frame 10, 12 or 2 the network gave frame 48, every SOP below it too;
+    hython without the bridge did the same. Only frame 1 reset it. A session
+    measured and rendered frame 10 as frame 48. Said only when the
+    network maps time as by default, so its frame reads straight off its time.
+    """
+    with contextlib.suppress(Exception):
+        if node.evalParm("timeoffset") != 0 or node.evalParm("timescale") != 1:
+            return None
+    start = None
+    with contextlib.suppress(Exception):
+        start = node.evalParm("startframe")
+    if start is None or frame <= start or abs(sim_frame - frame) < 0.5:
+        return None
+    limit = None
+    with contextlib.suppress(Exception):
+        limit = node.evalParm("cachemaxsize")
+    held = f"{round(memory_bytes / (1024 * 1024))} MB" if memory_bytes else "its memory"
+    cache = f"the memory cache ({held} of cachemaxsize {limit} MB)" if limit else "the memory cache"
+    return (
+        f"The simulation holds frame {sim_frame:g} while the scene is at frame {frame:g}: frame {frame:g} "
+        f"is no longer in {cache}, and Houdini gives the frame it kept instead of simulating again. "
+        f"Every node reading this network gets frame {sim_frame:g}. reset_simulation, then "
+        f"cook_frame_range forward from frame {start:g}, or raise cachemaxsize."
+    )
+
+
 def _get_simulation_info(node_path: str) -> dict:
-    """Get DOP network simulation state information."""
+    """Get DOP network simulation state information.
+
+    The network is cooked at the current frame first, as the viewport would:
+    a SOP below it can hold geometry from another cook, and the simulation's
+    time() is that of its last cook. `simulation_frame` is the frame of that
+    time, with a `note` when it is not the scene's.
+    """
     node = _get_dop_node(node_path)
+    with contextlib.suppress(Exception):
+        node.cook()
     sim = _get_simulation(node_path)
 
     objects = sim.objects()
@@ -276,17 +317,26 @@ def _get_simulation_info(node_path: str) -> dict:
     except (hou.OperationFailed, AttributeError) as e:
         logger.debug("Could not read timestep: %s", e)
 
-    return {
+    sim_time = sim.time()
+    frame = hou.frame()
+    reply = {
         "node_path": node_path,
         "node_type": node.type().name(),
-        "simulation_time": sim.time(),
+        "simulation_time": sim_time,
         "timestep": timestep,
         "object_count": object_count,
         "memory_usage_bytes": memory_bytes,
         "memory_usage_mb": round(memory_bytes / (1024 * 1024), 2) if memory_bytes else 0,
         "is_simulating": is_simulating,
-        "current_frame": hou.frame(),
+        "current_frame": frame,
     }
+    with contextlib.suppress(Exception):
+        sim_frame = round(hou.timeToFrame(sim_time), 3)
+        reply["simulation_frame"] = sim_frame
+        note = _cache_eviction_note(node, sim_frame, frame, memory_bytes)
+        if note:
+            reply["note"] = note
+    return reply
 
 
 def _list_dop_objects(node_path: str) -> dict:
