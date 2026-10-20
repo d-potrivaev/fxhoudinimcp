@@ -437,3 +437,20 @@ def test_get_simulation_info_cooks_first(monkeypatch):
     assert order == ["cook", "time"]
     assert reply["simulation_frame"] == 48 and reply["current_frame"] == 10
     assert "frame 48" in reply["note"]
+
+
+def test_a_failed_cook_is_reported_not_blamed_on_the_cache(monkeypatch):
+    hou = dops.hou
+    node = _dopnet(_DEFAULT)
+    node.type.return_value.name.return_value = "dopnet"
+    node.cook.side_effect = RuntimeError("solver failed")
+    sim = MagicMock()
+    sim.time.return_value = 1.958333
+    sim.memoryUsage.return_value = 1
+    sim.objects.return_value = []
+    monkeypatch.setattr(dops, "_get_dop_node", lambda path: node)
+    monkeypatch.setattr(dops, "_get_simulation", lambda path: sim)
+    monkeypatch.setattr(hou, "frame", lambda: 10.0)
+    monkeypatch.setattr(hou, "timeToFrame", lambda t: t * 24 + 1)
+    reply = dops._get_simulation_info("/obj/fx/popnet")
+    assert reply["cook_error"] == "solver failed" and "note" not in reply

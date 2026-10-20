@@ -286,11 +286,15 @@ def _get_simulation_info(node_path: str) -> dict:
     The network is cooked at the current frame first, as the viewport would:
     a SOP below it can hold geometry from another cook, and the simulation's
     time() is that of its last cook. `simulation_frame` is the frame of that
-    time, with a `note` when it is not the scene's.
+    time, with a `note` when it is not the scene's. A cook that fails is
+    named in `cook_error`, not blamed on the cache.
     """
     node = _get_dop_node(node_path)
-    with contextlib.suppress(Exception):
+    cook_error = None
+    try:
         node.cook()
+    except Exception as e:
+        cook_error = str(e)
     sim = _get_simulation(node_path)
 
     objects = sim.objects()
@@ -330,12 +334,15 @@ def _get_simulation_info(node_path: str) -> dict:
         "is_simulating": is_simulating,
         "current_frame": frame,
     }
+    if cook_error:
+        reply["cook_error"] = cook_error
     with contextlib.suppress(Exception):
         sim_frame = round(hou.timeToFrame(sim_time), 3)
         reply["simulation_frame"] = sim_frame
-        note = _cache_eviction_note(node, sim_frame, frame, memory_bytes)
-        if note:
-            reply["note"] = note
+        if not cook_error:
+            note = _cache_eviction_note(node, sim_frame, frame, memory_bytes)
+            if note:
+                reply["note"] = note
     return reply
 
 

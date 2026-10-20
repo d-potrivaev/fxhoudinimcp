@@ -2504,6 +2504,20 @@ def _check_promotion(index: int, item: Any, seen: set) -> tuple[hou.VopNode, str
             f"promotions[{index}]: {node.path()} input {wanted!r} is already wired from "
             f"{source.path()}; promoting it would replace that wire. Disconnect it first."
         )
+    # A Parameter VOP whose name the owner already has binds to that parm
+    # instead of making one: fit1.srcmax promoted as "destmax" came back
+    # "success" with destmax's value and drove srcmax from it (22.0.368).
+    parm_name = str(name or wanted)
+    if kind != "constant":
+        if ("parm", parm_name) in seen:
+            return f"promotions[{index}]: parm name {parm_name!r} is used twice in this batch; give a name"
+        seen.add(("parm", parm_name))
+        taken = next((o for o in _vop_owners(node) if o.parmTuple(parm_name) is not None), None)
+        if taken is not None:
+            return (
+                f"promotions[{index}]: {taken.path()} already has a parm {parm_name!r}; "
+                "a Parameter VOP of that name would share it. Give another name."
+            )
     return node, wanted, kind
 
 
