@@ -477,3 +477,23 @@ def test_a_cook_stopped_from_the_dialog_is_named_and_not_carried_on(monkeypatch)
     sim.objects.assert_not_called()
     assert reply["interrupted"] is True and reply["object_count"] is None
     assert "frame 48 of 150" in reply["note"] and "cook_error" not in reply
+
+
+def test_esc_during_objects_is_named_too(monkeypatch):
+    """objects() simulates forward itself; Esc there is interrupted, not an error."""
+    hou = dops.hou
+    node = _dopnet(_DEFAULT)
+    node.type.return_value.name.return_value = "dopnet"
+    node.errors.return_value = ["Cooking was interrupted."]
+    sim = MagicMock()
+    sim.objects.side_effect = Exception("cook failed")
+    sim.time.return_value = 1.958333
+    sim.memoryUsage.return_value = 1
+    monkeypatch.setattr(dops, "_get_dop_node", lambda path: node)
+    monkeypatch.setattr(dops, "_get_simulation", lambda path: sim)
+    monkeypatch.setattr(hou, "frame", lambda: 150.0)
+    monkeypatch.setattr(hou, "timeToFrame", lambda t: t * 24 + 1)
+    reply = dops._get_simulation_info("/obj/fx/popnet")
+    assert sim.objects.call_count == 1
+    assert reply["interrupted"] is True and reply["object_count"] is None
+    assert "frame 48 of 150" in reply["note"] and "cook_error" not in reply

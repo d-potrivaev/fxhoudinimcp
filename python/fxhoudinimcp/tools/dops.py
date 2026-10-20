@@ -7,6 +7,7 @@ from __future__ import annotations
 from fxhoudinimcp._sdk import Context
 
 # Internal
+from fxhoudinimcp.bridge import NO_TIMEOUT
 from fxhoudinimcp.server import _get_bridge, mcp
 
 
@@ -27,7 +28,9 @@ async def get_simulation_info(ctx: Context, node_path: str) -> dict:
         node_path: DOP network node path.
     """
     bridge = _get_bridge(ctx)
-    return await bridge.execute("dops.get_simulation_info", {"node_path": node_path})
+    return await bridge.execute(
+        "dops.get_simulation_info", {"node_path": node_path}, timeout=NO_TIMEOUT
+    )
 
 
 @mcp.tool()
