@@ -135,11 +135,36 @@ def _load_scope(scope: str) -> dict[str, tuple[str, str]]:
 
 
 def _title_of(text: str) -> str:
-    for line in text.splitlines()[:5]:
+    # A node page opens with #type/#context/#internal/#icon/#since lines, so
+    # its "= Pyro Solver =" is the seventh line: the first five came back "".
+    for line in text.splitlines()[:20]:
         stripped = line.strip()
-        if stripped.startswith("=") and stripped.endswith("="):
+        if stripped.startswith("=") and stripped.endswith("=") and not stripped.startswith("=="):
             return stripped.strip("= ").strip()
     return ""
+
+
+_PAGE_CAP = 20_000
+
+
+def _sections_of(text: str) -> list[dict]:
+    """Each "== Section ==" (level 1) and "~~ Subsection ~~" (level 2) with its offset.
+
+    On a node page these are the parameter tabs and their folders: Wind and
+    Buoyancy of the Pyro Solver are level 2, inside "== Shape ==".
+    """
+    sections = []
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+        for mark, level in (("==", 1), ("~~", 2)):
+            if stripped.startswith(mark) and not stripped.startswith(mark + mark[0]):
+                # "== Sourcing == (sourcing)" carries an anchor after the heading.
+                title = stripped[2:].split(mark)[0].strip()
+                if title:
+                    sections.append({"title": title, "level": level, "offset": offset})
+        offset += len(line)
+    return sections
 
 
 def _excerpt(text: str, lower: str, token: str, width: int = 220) -> str:
@@ -220,12 +245,20 @@ register_handler("help.search_help", search_help)
 ###### help.get_help_page
 
 
-def get_help_page(path: str, **_: Any) -> dict:
+def get_help_page(path: str, offset: int = 0, section: str | None = None, **_: Any) -> dict:
     """Fetch one documentation page by path (as returned by search_help).
+
+    A page is served 20,000 characters at a time. nodes/sop/pyrosolver is
+    50,925: it stopped in Fields, and Shape, Wind and Buoyancy could not be
+    read at all. A longer page now names its `sections` with their
+    offsets and `next_offset`; *offset* or *section* reads on from there.
 
     Args:
         path: "scope/entry", e.g. "nodes/sop/scatter", "vex/functions/noise",
             "expressions/ch". The .txt extension is optional.
+        offset: Character offset to start from, e.g. a `next_offset`.
+        section: A section title (or the start of one, any case) to start at;
+            overrides *offset*.
     """
     _require_help()
     normalized = path.strip().strip("/")
@@ -248,15 +281,39 @@ def get_help_page(path: str, **_: Any) -> dict:
         entry = actual
 
     text = pages[entry][0]
-    _PAGE_CAP = 20_000
-    truncated = len(text) > _PAGE_CAP
-    return {
+    sections = _sections_of(text)
+    if section is not None:
+        wanted = str(section).strip().lower()
+        found = [s for s in sections if s["title"].lower() == wanted] or [
+            s for s in sections if s["title"].lower().startswith(wanted)
+        ]
+        if not found:
+            raise ValueError(
+                f"No section {section!r} in {scope}/{entry}. Its sections: {[s['title'] for s in sections]}"
+            )
+        offset = found[0]["offset"]
+    offset = int(offset or 0)
+    if offset < 0 or (offset and offset >= len(text)):
+        raise ValueError(f"offset {offset} is outside {scope}/{entry} (length {len(text)}).")
+    end = offset + _PAGE_CAP
+    if end < len(text):
+        # Cut at a line end, so the next read starts on a whole line.
+        cut = text.rfind("\n", offset, end)
+        end = cut + 1 if cut > offset else end
+    reply = {
         "path": f"{scope}/{entry}",
         "title": _title_of(text),
         "length": len(text),
-        "truncated": truncated,
-        "text": text[:_PAGE_CAP],
+        "truncated": end < len(text),
+        "text": text[offset:end],
     }
+    if offset:
+        reply["offset"] = offset
+    if end < len(text):
+        reply["next_offset"] = end
+    if len(text) > _PAGE_CAP:
+        reply["sections"] = sections
+    return reply
 
 
 register_handler("help.get_help_page", get_help_page)

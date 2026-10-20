@@ -48,6 +48,21 @@ class TestGetHelpPage:
         assert page["path"] == "nodes/sop/scatter"
         assert "scatter" in page["text"].lower()
 
+    def test_long_page_reads_on_by_offset_and_section(self, call):
+        page = call("help.get_help_page", path="nodes/sop/pyrosolver")
+        assert page["title"] == "Pyro Solver" and page["truncated"], page["title"]
+        titles = {(s["title"], s["level"]) for s in page["sections"]}
+        assert {("Shape", 1), ("Wind", 2), ("Buoyancy", 2)} <= titles, titles
+        total, chunk = len(page["text"]), page
+        while "next_offset" in chunk:
+            chunk = call(
+                "help.get_help_page", path="nodes/sop/pyrosolver", offset=chunk["next_offset"]
+            )
+            total += len(chunk["text"])
+        assert total == page["length"] and not chunk["truncated"]
+        wind = call("help.get_help_page", path="nodes/sop/pyrosolver", section="wind")
+        assert wind["text"].startswith("~~ Wind ~~"), wind["text"][:40]
+
     def test_unknown_page_suggests_close_matches(self, call):
         error = call("help.get_help_page", path="nodes/sop/scatterr", expect_error=True)
         assert "scatter" in error["message"]
