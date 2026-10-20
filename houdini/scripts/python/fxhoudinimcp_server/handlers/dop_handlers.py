@@ -248,14 +248,21 @@ def _records_to_dict(data: hou.DopData) -> dict:
 
 
 def _cache_eviction_note(
-    node: hou.Node, sim_frame: float, frame: float, memory_bytes: int
+    node: hou.Node,
+    sim_frame: float,
+    frame: float,
+    memory_bytes: int,
+    object_count: int | None = None,
 ) -> str | None:
     """Why the simulation holds another frame than the scene, or None when it does not.
 
     Measured on 22.0.466 on a POP network of 7.7 M points:
     cooked 1-50, the 5000 MB memory cache kept the late frames only, and at
     frame 10, 12 or 2 the network gave frame 48, every SOP below it too;
-    hython without the bridge did the same. Only frame 1 reset it. A session
+    hython without the bridge did the same. Only frame 1 reset it. What the
+    nodes below get is not always that frame: a 3600-point POP network with a
+    1 MB cache, cooked 1-20 and set back to 5, held frame 19's time with no
+    objects and no points, so they got nothing. A session
     measured and rendered frame 10 as frame 48. Said only when the
     network maps time as by default, so its frame reads straight off its time.
     """
@@ -274,9 +281,13 @@ def _cache_eviction_note(
     cache = f"the memory cache ({held} of cachemaxsize {limit} MB)" if limit else "the memory cache"
     return (
         f"The simulation holds frame {sim_frame:g} while the scene is at frame {frame:g}: frame {frame:g} "
-        f"is no longer in {cache}, and Houdini gives the frame it kept instead of simulating again. "
-        f"Every node reading this network gets frame {sim_frame:g}. reset_simulation, then "
-        f"cook_frame_range forward from frame {start:g}, or raise cachemaxsize."
+        f"is no longer in {cache}, and Houdini does not simulate again to reach it. "
+        + (
+            "The simulation has no objects, so the nodes reading this network get no geometry. "
+            if object_count == 0
+            else f"The nodes reading this network get frame {sim_frame:g}'s state. "
+        )
+        + f"reset_simulation, then cook_frame_range forward from frame {start:g}, or raise cachemaxsize."
     )
 
 
@@ -333,7 +344,7 @@ def _get_simulation_info(node_path: str) -> dict:
     with contextlib.suppress(Exception):
         sim_frame = round(hou.timeToFrame(sim_time), 3)
         reply["simulation_frame"] = sim_frame
-        note = _cache_eviction_note(node, sim_frame, frame, memory_bytes)
+        note = _cache_eviction_note(node, sim_frame, frame, memory_bytes, object_count)
         if note:
             reply["note"] = note
     return reply

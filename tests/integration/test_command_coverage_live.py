@@ -80,6 +80,8 @@ class TestDops:
         info = call("dops.get_simulation_info", node_path=dop.path())
         assert info["current_frame"] == 5 and info["simulation_frame"] != 5, info
         assert "frame 5" in info["note"] and "cachemaxsize 1 MB" in info["note"], info
+        # Measured: what the network holds then is empty, not frame N's particles.
+        assert info["object_count"] == 0 and "no geometry" in info["note"], info
         hou.setFrame(1)
         info = call("dops.get_simulation_info", node_path=dop.path())
         assert info["simulation_frame"] == 1 and "note" not in info, info
