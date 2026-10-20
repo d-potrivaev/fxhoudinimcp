@@ -422,6 +422,13 @@ def test_a_simulation_behind_the_scene_is_not_called_eviction():
     assert "cook_frame_range forward from frame 1" in note
 
 
+def test_a_simulation_switched_off_is_named_not_blamed_on_a_cook(monkeypatch):
+    # Checked live: Simulation toggle off, frame 60 -> 70, no error, frame 60 held.
+    monkeypatch.setattr(dops.hou, "simulationEnabled", lambda: False, raising=False)
+    note = dops._cache_eviction_note(_dopnet(_DEFAULT), 60, 70, 0, 1)
+    assert "simulation is turned off" in note and "forced again" not in note
+
+
 @pytest.mark.parametrize(
     ("sim_frame", "frame", "parms"),
     [
