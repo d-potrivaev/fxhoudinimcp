@@ -465,9 +465,12 @@ class TestCurrentDopNetwork:
     def editor(self, monkeypatch):
         dop = object()
         node = MagicMock()
+        node.isNetwork.return_value = True
+        node.path.return_value = "/obj/project/popnet"
         current = {"net": None}
         pane = MagicMock()
         pane.type.return_value = "NetworkEditor"
+        pane.pwd.return_value = node
         monkeypatch.setattr(viewport, "require_ui", lambda *a, **k: None)
         monkeypatch.setattr(viewport, "keep_viewer_state", contextlib.nullcontext)
         monkeypatch.setattr(viewport, "set_other_objects", lambda mode: mode)
@@ -506,3 +509,182 @@ class TestCurrentDopNetwork:
         reply = viewport.set_current_network("/obj/geo1", other_objects=None)
         assert current["net"] is None
         assert "current_dop_network" not in reply
+
+
+# A Visible Objects pattern is saved with the hip. One left at another object
+# (/obj/project_04_fern) drew the object set_current_network went into not at
+# all, and every screenshot of it came out black (22.0.466).
+
+
+@pytest.mark.parametrize(
+    ("pattern", "hides"),
+    [
+        ("*", False),
+        ("", False),
+        ("/obj/project_04_fern", True),
+        ("/obj/project_05_magic_smoke", False),
+        ("project_0*", False),
+        ("* ^/obj/project_05_magic_smoke", True),
+        ("^project_05* /obj/project_05_magic_smoke", False),
+        ("@shown", False),
+        ("/obj/project_04_fern @shown", False),
+    ],
+)
+def test_pattern_hides(pattern, hides):
+    assert ui.pattern_hides(pattern, "/obj/project_05_magic_smoke") is hides
+
+
+class _Settings:
+    def __init__(self, pattern):
+        self.pattern = pattern
+
+    def visibleObjects(self):
+        return self.pattern
+
+    def setVisibleObjects(self, pattern):
+        self.pattern = pattern
+
+
+class _Viewport:
+    def __init__(self, name, pattern):
+        self._name = name
+        self._settings = _Settings(pattern)
+
+    def name(self):
+        return self._name
+
+    def settings(self):
+        return self._settings
+
+
+def _object(path, obj_category):
+    node = MagicMock()
+    node.path.return_value = path
+    node.type.return_value.category.return_value = obj_category
+    node.childTypeCategory.return_value = "sop"
+    return node
+
+
+@pytest.fixture
+def viewer(monkeypatch):
+    hou = ui.hou
+    obj_category = object()
+    monkeypatch.setattr(hou, "objNodeTypeCategory", lambda: obj_category)
+    obj = _object("/obj/project_05_magic_smoke", obj_category)
+    inside = MagicMock()
+    inside.type.return_value.category.return_value = "sop"
+    inside.parent.return_value = obj
+    viewports = [_Viewport("top1", "*"), _Viewport("persp1", "/obj/project_04_fern")]
+    tab = MagicMock()
+    tab.name.return_value = "panetab1"
+    tab.type.return_value = hou.paneTabType.SceneViewer
+    tab.viewports.return_value = viewports
+    tab.curViewport.return_value = viewports[1]
+    tab.pwd.return_value = obj
+    monkeypatch.setattr(hou.ui, "paneTabs", lambda: [tab])
+    return SimpleNamespace(tab=tab, obj=obj, inside=inside, viewports=viewports)
+
+
+def test_set_current_network_shows_the_object_again(viewer):
+    reset = ui.show_viewed_object(viewer.inside)
+    assert reset == [
+        {
+            "pane": "panetab1",
+            "viewport": "persp1",
+            "visible_objects": "/obj/project_04_fern",
+            "object": "/obj/project_05_magic_smoke",
+        }
+    ]
+    assert [v.settings().visibleObjects() for v in viewer.viewports] == ["*", "*"]
+
+
+def test_capture_names_a_pattern_that_hides_the_object(viewer):
+    context = ui.viewer_context(viewer.tab)
+    assert "/obj/project_04_fern" in context["visible_objects_note"]
+    viewer.viewports[1].settings().setVisibleObjects("*")
+    assert "visible_objects_note" not in ui.viewer_context(viewer.tab)
+
+
+def test_nothing_is_reset_at_obj_level(viewer, monkeypatch):
+    manager = MagicMock()
+    manager.type.return_value.category.return_value = ui.hou.objNodeTypeCategory()
+    manager.childTypeCategory.return_value = ui.hou.objNodeTypeCategory()
+    assert ui.show_viewed_object(manager) == []
+    assert viewer.viewports[1].settings().visibleObjects() == "/obj/project_04_fern"
+
+
+# set_current_network on a SOP (not a network): NetworkEditor.cd() did nothing
+# and the reply said success. The node is made current in its own network, and
+# an editor that did not get there is an error (22.0.466).
+
+
+@pytest.fixture
+def sop_editor(monkeypatch):
+    hou = viewport.hou
+    geo = MagicMock()
+    geo.path.return_value = "/obj/acc_vis"
+    geo.isNetwork.return_value = True
+    box = MagicMock()
+    box.path.return_value = "/obj/acc_vis/box1"
+    box.isNetwork.return_value = False
+    box.parent.return_value = geo
+    nodes = {"/obj/acc_vis": geo, "/obj/acc_vis/box1": box}
+    state = {"pwd": MagicMock(path=lambda: "/obj/fern/popnet"), "current": None, "moves": True}
+    pane = MagicMock()
+    pane.type.return_value = "NetworkEditor"
+    pane.name.return_value = "panetab7"
+    pane.pwd.side_effect = lambda: state["pwd"]
+
+    def cd(path):
+        # As measured: cd() to a SOP leaves the editor where it is.
+        if state["moves"] and nodes[path].isNetwork():
+            state["pwd"] = nodes[path]
+
+    pane.cd.side_effect = cd
+    pane.setCurrentNode.side_effect = lambda n: state.update(current=n)
+    monkeypatch.setattr(viewport, "require_ui", lambda *a, **k: None)
+    monkeypatch.setattr(viewport, "keep_viewer_state", contextlib.nullcontext)
+    monkeypatch.setattr(viewport, "set_other_objects", lambda mode: mode)
+    monkeypatch.setattr(viewport, "show_viewed_object", lambda network: [])
+    monkeypatch.setattr(hou, "node", lambda path: nodes.get(path))
+    monkeypatch.setattr(hou, "paneTabType", SimpleNamespace(NetworkEditor="NetworkEditor"))
+    monkeypatch.setattr(hou, "ui", SimpleNamespace(paneTabs=lambda: [pane]))
+    monkeypatch.setattr(hou, "dopNodeTypeCategory", lambda: object())
+    return SimpleNamespace(state=state, geo=geo, box=box)
+
+
+def test_a_sop_is_made_current_in_its_network(sop_editor):
+    reply = viewport.set_current_network("/obj/acc_vis/box1")
+    assert sop_editor.state["pwd"] is sop_editor.geo
+    assert sop_editor.state["current"] is sop_editor.box
+    assert reply["entered"] == "/obj/acc_vis" and reply["current_node"] == "/obj/acc_vis/box1"
+
+
+def test_a_network_is_entered_as_before(sop_editor):
+    reply = viewport.set_current_network("/obj/acc_vis")
+    assert sop_editor.state["pwd"] is sop_editor.geo
+    assert "entered" not in reply and "current_node" not in reply
+
+
+def test_an_editor_that_did_not_move_is_an_error(sop_editor):
+    sop_editor.state["moves"] = False
+    with pytest.raises(RuntimeError, match="/obj/fern/popnet"):
+        viewport.set_current_network("/obj/acc_vis")
+
+
+def test_the_reset_is_named_in_the_reply(sop_editor, monkeypatch):
+    entry = {
+        "pane": "panetab1",
+        "viewport": "persp1",
+        "visible_objects": "/obj/project_04_fern",
+        "object": "/obj/acc_vis",
+    }
+    asked = []
+    monkeypatch.setattr(
+        viewport, "show_viewed_object", lambda network: asked.append(network) or [entry]
+    )
+    reply = viewport.set_current_network("/obj/acc_vis")
+    assert asked == [sop_editor.geo] and reply["visible_objects_reset"] == [entry]
+    asked.clear()
+    reply = viewport.set_current_network("/obj/acc_vis", other_objects=None)
+    assert asked == [] and "visible_objects_reset" not in reply
