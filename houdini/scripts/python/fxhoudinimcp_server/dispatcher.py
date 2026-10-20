@@ -53,6 +53,9 @@ _UNBOUNDED_COMMANDS = frozenset(
         # frame ran past 120 s while Houdini kept cooking, and the next command
         # timed out queued behind it.
         "graph.cook_frame_range",
+        # Simulates up to the scene's frame when the scene is ahead, under the
+        # same interrupt dialog.
+        "dops.get_simulation_info",
     }
 )
 

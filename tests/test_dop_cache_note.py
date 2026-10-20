@@ -454,3 +454,26 @@ def test_a_failed_cook_is_reported_not_blamed_on_the_cache(monkeypatch):
     monkeypatch.setattr(hou, "timeToFrame", lambda t: t * 24 + 1)
     reply = dops._get_simulation_info("/obj/fx/popnet")
     assert reply["cook_error"] == "solver failed" and "note" not in reply
+
+
+def test_a_cook_stopped_from_the_dialog_is_named_and_not_carried_on(monkeypatch):
+    """Esc in Houdini's interrupt dialog: objects() would simulate on, so it is not called."""
+    hou = dops.hou
+
+    class OperationInterrupted(Exception):
+        pass
+
+    node = _dopnet(_DEFAULT)
+    node.type.return_value.name.return_value = "dopnet"
+    node.cook.side_effect = OperationInterrupted("interrupted")
+    sim = MagicMock()
+    sim.time.return_value = 1.958333
+    sim.memoryUsage.return_value = 1
+    monkeypatch.setattr(dops, "_get_dop_node", lambda path: node)
+    monkeypatch.setattr(dops, "_get_simulation", lambda path: sim)
+    monkeypatch.setattr(hou, "frame", lambda: 150.0)
+    monkeypatch.setattr(hou, "timeToFrame", lambda t: t * 24 + 1)
+    reply = dops._get_simulation_info("/obj/fx/popnet")
+    sim.objects.assert_not_called()
+    assert reply["interrupted"] is True and reply["object_count"] is None
+    assert "frame 48 of 150" in reply["note"] and "cook_error" not in reply

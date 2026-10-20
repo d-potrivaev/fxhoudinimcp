@@ -18,7 +18,10 @@ async def get_simulation_info(ctx: Context, node_path: str) -> dict:
     back to a frame the memory cache no longer keeps, Houdini gives the
     frame it kept instead of simulating again; `note` then says so, and
     every node reading the network has that frame too. Check this before
-    measuring or rendering a frame reached backwards.
+    measuring or rendering a frame reached backwards. A scene ahead of the
+    simulation is simulated up to its frame first, under Houdini's
+    interrupt dialog and with no deadline: wait for the reply. Stopped
+    there, it says so (`interrupted`) with the frame reached.
 
     Args:
         node_path: DOP network node path.
