@@ -22,6 +22,7 @@ from fxhoudinimcp_server.ui import (
     require_ui,
     selection_hidden,
     set_other_objects,
+    show_viewed_object,
     viewer_context,
     viewer_stays_out_of_dops,
 )
@@ -1092,6 +1093,12 @@ def set_current_network(network_path: str, other_objects: str | None = "hide") -
     knowing this did: it is set here explicitly and named in
     `current_dop_network`.
 
+    The viewport's Visible Objects pattern is saved with the hip, and one
+    left at another object drew this one not at all: a session's
+    screenshots came out black. Unless *other_objects* is None, a
+    pattern that leaves this object out is set back to "*" and named in
+    `visible_objects_reset`; other objects stay hidden by *other_objects*.
+
     Args:
         network_path: Path to the network to navigate to (e.g. '/obj/geo1').
         other_objects: "hide", "ghost", "show", or None to leave the viewer as is.
@@ -1113,9 +1120,26 @@ def set_current_network(network_path: str, other_objects: str | None = "hide") -
     if network_editor is None:
         raise RuntimeError("No Network Editor pane found.")
 
+    # cd() to a node that is not a network (a SOP) left the editor where it
+    # was and the reply said success: from /obj/fern/popnet to
+    # /obj/geo1/box1 nothing moved (22.0.466). Such a node is made
+    # current in its own network, as the editor does when it is clicked.
+    network = node
+    with contextlib.suppress(Exception):
+        if not node.isNetwork() and node.parent() is not None:
+            network = node.parent()
     # The viewer follows the editor; its cameras and the selection stay.
     with keep_viewer_state():
-        network_editor.cd(network_path)
+        network_editor.cd(network.path())
+        if network is not node:
+            with contextlib.suppress(Exception):
+                network_editor.setCurrentNode(node)
+    reached = network_editor.pwd()
+    if reached is None or reached.path() != network.path():
+        raise RuntimeError(
+            f"The network editor did not go into {network.path()}; it is at "
+            f"{reached.path() if reached is not None else 'no network'}."
+        )
 
     reply = {
         "success": True,
@@ -1123,11 +1147,18 @@ def set_current_network(network_path: str, other_objects: str | None = "hide") -
         "pane_name": network_editor.name(),
         "other_objects": set_other_objects(other_objects),
     }
+    if network is not node:
+        reply["entered"] = network.path()
+        reply["current_node"] = node.path()
+    if other_objects is not None:
+        reset = show_viewed_object(network)
+        if reset:
+            reply["visible_objects_reset"] = reset
     is_dop = False
     with contextlib.suppress(Exception):
-        is_dop = node.childTypeCategory() == hou.dopNodeTypeCategory()
+        is_dop = network.childTypeCategory() == hou.dopNodeTypeCategory()
     if is_dop:
-        hou.setCurrentDopNet(node)
+        hou.setCurrentDopNet(network)
         with contextlib.suppress(Exception):
             reply["current_dop_network"] = hou.currentDopNet().path()
     return reply

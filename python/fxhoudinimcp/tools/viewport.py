@@ -240,7 +240,9 @@ async def capture_screenshot(
     get_scene_summary unless visual confirmation is genuinely needed.
     A Scene Viewer capture names the network it shows (`viewer_network`);
     `viewer_note` says when that is a DOP network, drawn as the simulation's
-    objects rather than the SOP display.
+    objects rather than the SOP display; `visible_objects_note`, when the
+    viewport's Visible Objects pattern leaves out the object the viewer is
+    in, so the frame shows none of it.
 
     Args:
         output_path: Image file path. Default: a new PNG in the temp dir.
@@ -300,6 +302,12 @@ async def set_current_network(
     A DOP network becomes the current one, where DOP shelf tools build (the
     reply names `current_dop_network`), as entering it in Houdini does; with
     other_objects=None that is all it changes besides the editor.
+
+    A Visible Objects pattern (saved with the hip) that leaves this object
+    out is set back to "*", named in `visible_objects_reset`.
+
+    A node that is not a network (a SOP) is made current in its own network,
+    named in `entered` and `current_node`.
 
     Args:
         network_path: Network path to navigate to.

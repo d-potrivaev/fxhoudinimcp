@@ -18,6 +18,7 @@ from __future__ import annotations
 
 # Built-in
 import contextlib
+import fnmatch
 from collections.abc import Iterator
 
 # Third-party
@@ -92,6 +93,89 @@ def set_other_objects(mode: str | None) -> str | None:
     except Exception:
         return applied
     return applied
+
+
+def _viewed_object(network) -> hou.Node | None:
+    """The object whose contents *network* belongs to, or None at /obj or outside it."""
+    node = network
+    while node is not None and node.type().category() != hou.objNodeTypeCategory():
+        node = node.parent()
+    if node is None or node.childTypeCategory() == hou.objNodeTypeCategory():
+        return None
+    return node
+
+
+def pattern_hides(pattern: str, obj_path: str) -> bool:
+    """Whether the Visible Objects *pattern* certainly leaves *obj_path* out.
+
+    Tokens are read left to right as Houdini does, a later one overriding an
+    earlier one: "*", a name or path with wildcards, "^" to take away. A
+    bundle (@...) is not resolved, so a pattern holding one never counts as
+    hiding anything.
+    """
+    tokens = str(pattern).split()
+    if not tokens:
+        return False
+    name = obj_path.rsplit("/", 1)[-1]
+    shown = False
+    for token in tokens:
+        taken_away = token.startswith("^")
+        token = token.lstrip("^")
+        if token.startswith("@"):
+            return False
+        if fnmatch.fnmatchcase(obj_path if token.startswith("/") else name, token):
+            shown = not taken_away
+    return not shown
+
+
+def hidden_by_visible_objects(scene_viewer, obj: hou.Node | None = None) -> list[dict]:
+    """The viewports of *scene_viewer* whose Visible Objects pattern hides *obj*.
+
+    *obj* defaults to the object the viewer is in.
+
+    The pattern is saved with the hip: a session that limited it for a capture
+    of /obj/project_04_fern left it so, and the next session's screenshots of
+    another object came out black.
+    """
+    hidden: list[dict] = []
+    with contextlib.suppress(Exception):
+        if obj is None:
+            obj = _viewed_object(scene_viewer.pwd())
+        if obj is None:
+            return hidden
+        for viewport in scene_viewer.viewports():
+            pattern = viewport.settings().visibleObjects()
+            if pattern_hides(pattern, obj.path()):
+                hidden.append(
+                    {
+                        "pane": scene_viewer.name(),
+                        "viewport": viewport.name(),
+                        "visible_objects": pattern,
+                        "object": obj.path(),
+                    }
+                )
+    return hidden
+
+
+def show_viewed_object(network) -> list[dict]:
+    """Set Visible Objects back to "*" wherever it hides the object *network* belongs to.
+
+    Returns what was reset, each entry with the pattern it held. Best effort.
+    """
+    reset: list[dict] = []
+    obj = _viewed_object(network)
+    if obj is None:
+        return reset
+    with contextlib.suppress(Exception):
+        for tab in hou.ui.paneTabs():
+            if tab.type() != hou.paneTabType.SceneViewer:
+                continue
+            for entry in hidden_by_visible_objects(tab, obj):
+                with contextlib.suppress(Exception):
+                    viewport = next(v for v in tab.viewports() if v.name() == entry["viewport"])
+                    viewport.settings().setVisibleObjects("*")
+                    reset.append(entry)
+    return reset
 
 
 def _in_lops(viewer) -> bool:
@@ -247,7 +331,25 @@ def viewer_context(scene_viewer) -> dict:
                 + (f" ({parent.path()})" if parent is not None else "")
                 + " to capture the SOP result."
             )
+    hidden = [
+        entry
+        for entry in hidden_by_visible_objects(scene_viewer)
+        if entry["viewport"] == _current_viewport_name(scene_viewer)
+    ]
+    if hidden:
+        entry = hidden[0]
+        context["visible_objects_note"] = (
+            f"Viewport {entry['viewport']} draws only {entry['visible_objects']!r}, which leaves out "
+            f"{entry['object']}, the object the viewer is in: the frame shows none of it. The pattern is "
+            "saved with the hip. set_current_network on the object sets it back to '*'."
+        )
     return context
+
+
+def _current_viewport_name(scene_viewer) -> str | None:
+    with contextlib.suppress(Exception):
+        return scene_viewer.curViewport().name()
+    return None
 
 
 def focus_network_editor(
