@@ -12,7 +12,13 @@ from fxhoudinimcp.server import _get_bridge, mcp
 
 @mcp.tool()
 async def get_simulation_info(ctx: Context, node_path: str) -> dict:
-    """Get DOP network simulation state.
+    """Get DOP network simulation state, cooked at the current frame.
+
+    `simulation_frame` is the frame the simulation actually holds. Going
+    back to a frame the memory cache no longer keeps, Houdini gives the
+    frame it kept instead of simulating again; `note` then says so, and
+    every node reading the network has that frame too. Check this before
+    measuring or rendering a frame reached backwards.
 
     Args:
         node_path: DOP network node path.
