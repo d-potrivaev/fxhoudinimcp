@@ -298,6 +298,16 @@ def _get_simulation_info(node_path: str) -> dict:
     node = _get_dop_node(node_path)
     cook_error = None
     interrupted = False
+
+    def _was_interrupted(e: Exception) -> bool:
+        # Esc raises OperationInterrupted, or a bare OperationFailed with
+        # "Cooking was interrupted." on the node (22.0, cook_frame_range).
+        errors = ""
+        with contextlib.suppress(Exception):
+            errors = " ".join(node.errors()).lower()
+        return type(e).__name__ == "OperationInterrupted" or "cooking was interrupted" in errors
+
+    objects = None
     with hou.InterruptableOperation(
         "Cooking simulation",
         long_operation_name=f"get_simulation_info {node_path}",
@@ -306,18 +316,19 @@ def _get_simulation_info(node_path: str) -> dict:
         try:
             node.cook()
         except Exception as e:
-            # Esc raises OperationInterrupted, or a bare OperationFailed with
-            # "Cooking was interrupted." on the node (22.0, cook_frame_range).
-            errors = ""
-            with contextlib.suppress(Exception):
-                errors = " ".join(node.errors()).lower()
-            if type(e).__name__ == "OperationInterrupted" or "cooking was interrupted" in errors:
-                interrupted = True
-            else:
+            if not _was_interrupted(e):
                 cook_error = str(e)
+            interrupted = cook_error is None
         sim = _get_simulation(node_path)
-        # objects() would carry on simulating where the artist stopped it.
-        objects = None if interrupted else sim.objects()
+        # objects() would carry on simulating where the artist stopped it, and
+        # simulates forward itself, so Esc can land there too.
+        if not interrupted:
+            try:
+                objects = sim.objects()
+            except Exception as e:
+                if not _was_interrupted(e):
+                    raise
+                interrupted = True
     object_count = len(objects) if objects is not None else 0
 
     # Memory usage (bytes) -- may not be available in all Houdini versions
