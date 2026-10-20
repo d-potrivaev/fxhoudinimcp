@@ -414,6 +414,14 @@ def test_an_empty_simulation_is_not_called_a_frame():
     assert "no geometry" in note and "state" not in note
 
 
+def test_a_simulation_behind_the_scene_is_not_called_eviction():
+    # Measured: failed at frames 2-3, forced again at 3 -- no error, frame 1, 0 MB.
+    note = dops._cache_eviction_note(_dopnet(_DEFAULT), 1, 3, 0, 1)
+    assert "frame 1 while the scene is at frame 3" in note
+    assert "has not simulated up to it" in note and "no longer in" not in note
+    assert "cook_frame_range forward from frame 1" in note
+
+
 @pytest.mark.parametrize(
     ("sim_frame", "frame", "parms"),
     [

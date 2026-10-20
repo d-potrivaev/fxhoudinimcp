@@ -265,6 +265,11 @@ def _cache_eviction_note(
     objects and no points, so they got nothing. A session
     measured and rendered frame 10 as frame 48. Said only when the
     network maps time as by default, so its frame reads straight off its time.
+
+    Eviction only ever leaves a later frame: a simulation behind the scene
+    after a cook that raised nothing has not simulated up to it. Measured on
+    22.0.466: a network that failed at frames 2 and 3, cooked again with
+    force at 3, showed no error and held frame 1 with 0 MB cached.
     """
     with contextlib.suppress(Exception):
         if node.evalParm("timeoffset") != 0 or node.evalParm("timescale") != 1:
@@ -274,6 +279,13 @@ def _cache_eviction_note(
         start = node.evalParm("startframe")
     if start is None or frame <= start or abs(sim_frame - frame) < 0.5:
         return None
+    if sim_frame < frame:
+        return (
+            f"The simulation holds frame {sim_frame:g} while the scene is at frame {frame:g}: it has not "
+            "simulated up to it, though the cook raised no error, so the memory cache is not the cause. "
+            "A cook that failed and was forced again no longer shows its error. reset_simulation, then "
+            f"cook_frame_range forward from frame {start:g}, which names a frame that fails."
+        )
     limit = None
     with contextlib.suppress(Exception):
         limit = node.evalParm("cachemaxsize")
