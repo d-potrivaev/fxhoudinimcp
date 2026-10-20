@@ -33,9 +33,28 @@ def _get_dop_node(node_path: str) -> hou.Node:
     return node
 
 
+def _require_dops(node: hou.Node) -> None:
+    """Raise unless *node* is a DOP network or a DOP inside one.
+
+    On anything else simulation() raises ObjectWasDeleted on 22.0.368, a SOP
+    solver such as Pyro Solver included: the simulation is in its dopnet child.
+    """
+    dop = hou.dopNodeTypeCategory()
+    if node.type().category() == dop or node.childTypeCategory() == dop:
+        return
+    inner = [
+        c.path()
+        for c in node.allSubChildren()
+        if c.childTypeCategory() == dop and c.type().category() != dop
+    ][:5]
+    hint = f" Its simulation is in {', '.join(inner)}." if inner else ""
+    raise ValueError(f"{node.path()} is not a DOP network.{hint}")
+
+
 def _get_simulation(node_path: str) -> hou.DopSimulation:
     """Return the DopSimulation from the given DOP network node."""
     node = _get_dop_node(node_path)
+    _require_dops(node)
     sim = node.simulation()
     if sim is None:
         raise hou.OperationFailed(
@@ -296,6 +315,8 @@ def _get_simulation_info(node_path: str) -> dict:
     told "timeout" while Houdini keeps cooking.
     """
     node = _get_dop_node(node_path)
+    # Before the cook: a SOP solver given here would simulate, then fail.
+    _require_dops(node)
     cook_error = None
     interrupted = False
 
