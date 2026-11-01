@@ -48,7 +48,9 @@ dev = [
     # get_attrib_stats takes a numpy path whenever numpy imports, as in Houdini;
     # without it here CI ran only the pure-Python fallback.
     "numpy>=1.24",
-    "pytest>=8.0",
+    # shortcut: pytest 9.2 monkeypatch undo deletes auto-created MagicMock
+    # attributes off the shared hou mock (~475 failures); lift once fixed upstream.
+    "pytest>=8.0,<9.2",
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
     "ruff>=0.8.0",
